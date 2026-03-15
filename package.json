@@ -6,11 +6,14 @@
   "scripts": {
     "dev:proxy": "pnpm --filter @openclaw-monitor/proxy dev",
     "dev:backend": "pnpm --filter @openclaw-monitor/backend dev",
-    "dev:client": "pnpm --filter @openclaw-monitor/client tauri dev",
+    "dev:client": "pnpm --filter @openclaw-monitor/client dev",
     "build": "pnpm -r build",
     "test": "pnpm -r test"
   },
   "keywords": ["openclaw", "monitor", "llm"],
   "author": "aifoooo",
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.3.3"
+  }
 }
