@@ -1,0 +1,16 @@
+{
+  "name": "openclaw-monitor",
+  "version": "1.0.0",
+  "private": true,
+  "description": "OpenClaw Monitor - 实时监控 OpenClaw 运行状态",
+  "scripts": {
+    "dev:proxy": "pnpm --filter @openclaw-monitor/proxy dev",
+    "dev:backend": "pnpm --filter @openclaw-monitor/backend dev",
+    "dev:client": "pnpm --filter @openclaw-monitor/client tauri dev",
+    "build": "pnpm -r build",
+    "test": "pnpm -r test"
+  },
+  "keywords": ["openclaw", "monitor", "llm"],
+  "author": "aifoooo",
+  "license": "MIT"
+}
