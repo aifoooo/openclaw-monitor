@@ -3,6 +3,7 @@ import cors from 'cors';
 import { createServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import routes from './routes';
+import { createWatcher } from './watcher';
 
 const app = express();
 const server = createServer(app);
@@ -54,6 +55,12 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`[Backend] Server started on http://localhost:${PORT}`);
   console.log(`[Backend] WebSocket available at ws://localhost:${PORT}`);
+  
+  // 启动文件监听
+  createWatcher((data) => {
+    // 广播 session 更新
+    broadcast('session:update', data);
+  });
 });
 
 // 优雅关闭
