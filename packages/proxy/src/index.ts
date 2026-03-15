@@ -26,6 +26,36 @@ function writeLog(entry: any): void {
   fs.appendFileSync(logFile, line);
 }
 
+// 尝试解析 JSON
+function tryParseJson(str: string): any {
+  try {
+    return JSON.parse(str);
+  } catch {
+    return str;
+  }
+}
+
+// 解析 SSE 数据
+function parseSSEData(data: string): any[] {
+  const lines = data.split('\n');
+  const chunks: any[] = [];
+  
+  for (const line of lines) {
+    if (line.startsWith('data: ')) {
+      const jsonStr = line.slice(6).trim();
+      if (jsonStr && jsonStr !== '[DONE]') {
+        try {
+          chunks.push(JSON.parse(jsonStr));
+        } catch {
+          // 忽略解析错误
+        }
+      }
+    }
+  }
+  
+  return chunks;
+}
+
 // 创建代理
 const proxy = httpProxy.createProxyServer({
   target: TARGET_BASE_URL,
@@ -36,31 +66,34 @@ const proxy = httpProxy.createProxyServer({
 // 创建服务器
 const server = http.createServer((req, res) => {
   const startTime = Date.now();
+  let reqBody: any = null;
+  let isStreaming = false;
+  const resChunks: Buffer[] = [];
   
   // 收集请求体
-  const reqChunks: Buffer[] = [];
-  const originalWrite = req.write.bind(req);
-  const originalEnd = req.end.bind(req);
+  let reqBodyStr = '';
+  req.on('data', (chunk) => {
+    reqBodyStr += chunk.toString();
+  });
   
-  // 拦截请求体
-  (req as any).write = function(chunk: any, ...args: any[]): any {
-    if (chunk) reqChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    return originalWrite(chunk, ...args);
-  };
-  
-  (req as any).end = function(chunk: any, ...args: any[]): any {
-    if (chunk) reqChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    return originalEnd(chunk, ...args);
-  };
+  req.on('end', () => {
+    if (reqBodyStr) {
+      try {
+        reqBody = JSON.parse(reqBodyStr);
+        isStreaming = reqBody.stream === true;
+      } catch {
+        reqBody = reqBodyStr;
+      }
+    }
+  });
 
-  // 收集响应体
-  const resChunks: Buffer[] = [];
-  const originalWriteRes = res.write.bind(res);
-  const originalEndRes = res.end.bind(res);
+  // 拦截响应
+  const originalWrite = res.write.bind(res);
+  const originalEnd = res.end.bind(res);
   
   res.write = function(chunk: any, ...args: any[]): boolean {
     if (chunk) resChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    return originalWriteRes(chunk, ...args);
+    return originalWrite(chunk, ...args);
   };
   
   res.end = function(chunk: any, ...args: any[]): any {
@@ -68,34 +101,51 @@ const server = http.createServer((req, res) => {
     
     // 记录日志
     const durationMs = Date.now() - startTime;
-    const reqBody = Buffer.concat(reqChunks).toString('utf-8');
-    const resBody = Buffer.concat(resChunks).toString('utf-8');
+    const resBodyStr = Buffer.concat(resChunks).toString('utf-8');
     
     try {
+      let resBody: any;
+      
+      if (isStreaming) {
+        // 流式响应：解析 SSE 数据
+        resBody = {
+          type: 'stream',
+          chunks: parseSSEData(resBodyStr),
+          raw: resBodyStr.length > 10000 ? resBodyStr.slice(0, 10000) + '...(truncated)' : resBodyStr,
+        };
+      } else {
+        // 非流式响应
+        resBody = tryParseJson(resBodyStr);
+      }
+      
       const logEntry = {
         timestamp: startTime,
         durationMs,
+        isStreaming,
         request: {
           method: req.method,
           path: req.url,
-          headers: req.headers,
-          body: reqBody ? JSON.parse(reqBody) : null,
+          headers: {
+            'content-type': req.headers['content-type'],
+            'authorization': req.headers['authorization'] ? '(redacted)' : undefined,
+          },
+          body: reqBody,
         },
         response: {
           statusCode: res.statusCode,
           headers: res.getHeaders ? res.getHeaders() : {},
-          body: resBody ? tryParseJson(resBody) : null,
+          body: resBody,
         },
       };
       
       writeLog(logEntry);
-      console.log(`[Proxy] ${req.method} ${req.url} - ${res.statusCode} (${durationMs}ms)`);
+      console.log(`[Proxy] ${req.method} ${req.url} - ${res.statusCode} (${durationMs}ms, ${isStreaming ? 'streaming' : 'non-streaming'})`);
     } catch (e) {
       console.error('[Proxy] Failed to log request:', e);
     }
     
     return originalEndRes(chunk, ...args);
-  };
+  }.bind(res);
 
   // 转发请求
   proxy.web(req, res, {
@@ -109,15 +159,6 @@ const server = http.createServer((req, res) => {
     }
   });
 });
-
-// 尝试解析 JSON
-function tryParseJson(str: string): any {
-  try {
-    return JSON.parse(str);
-  } catch {
-    return str;
-  }
-}
 
 // 错误处理
 proxy.on('error', (err, req, res) => {
