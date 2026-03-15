@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import type { Chat, Message } from '../types';
 import { parseAllSessions, parseSessionMessages } from '../parser';
+import { enrichWithProxyLog } from '../parser/proxy-log';
 
 const router = express.Router();
 
@@ -88,7 +89,10 @@ router.get('/messages', async (req, res) => {
     
     const messages = parseSessionMessages(chat.sessionFile);
     
-    res.json({ messages: messages.slice(0, Number(limit)) });
+    // 合并代理日志
+    const enrichedMessages = messages.map(msg => enrichWithProxyLog(msg));
+    
+    res.json({ messages: enrichedMessages.slice(0, Number(limit)) });
   } catch (error) {
     console.error('Failed to get messages:', error);
     res.status(500).json({ error: 'Failed to get messages' });
