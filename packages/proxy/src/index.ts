@@ -8,12 +8,16 @@ const PROXY_PORT = parseInt(process.env.PROXY_PORT || '38080');
 const TARGET_BASE_URL = process.env.TARGET_URL || 'https://api.lkeap.cloud.tencent.com/coding/v3';
 const LOG_DIR = process.env.LOG_DIR || '/var/log/openclaw-monitor';
 const LOG_ROTATION_DAYS = parseInt(process.env.LOG_ROTATION_DAYS || '7');
+const MAX_RETRIES = parseInt(process.env.MAX_RETRIES || '3');
+const RETRY_DELAY = parseInt(process.env.RETRY_DELAY || '1000');
 
 // 状态
 const startTime = Date.now();
 let requestCount = 0;
 let errorCount = 0;
 let lastRequestTime: number | null = null;
+let lastHeartbeat: number = Date.now();
+let isHealthy = true;
 
 // 确保日志目录存在
 if (!fs.existsSync(LOG_DIR)) {
@@ -96,12 +100,14 @@ const server = http.createServer((req, res) => {
     const uptime = Math.floor((Date.now() - startTime) / 1000);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
-      status: 'ok',
+      status: isHealthy ? 'ok' : 'degraded',
       uptime,
       uptimeHuman: `${Math.floor(uptime / 3600)}h ${Math.floor((uptime % 3600) / 60)}m ${uptime % 60}s`,
       requestCount,
       errorCount,
       lastRequestTime: lastRequestTime ? new Date(lastRequestTime).toISOString() : null,
+      lastHeartbeat: new Date(lastHeartbeat).toISOString(),
+      upstreamHealthy: isHealthy,
       target: TARGET_BASE_URL,
     }));
     return;
@@ -240,6 +246,32 @@ server.listen(PROXY_PORT, () => {
   
   // 每天清理一次旧日志
   setInterval(cleanOldLogs, 24 * 60 * 60 * 1000);
+  
+  // 心跳检测（每30秒）
+  setInterval(() => {
+    lastHeartbeat = Date.now();
+    
+    // 检查上游 API 是否可达
+    const req = http.request(TARGET_BASE_URL + '/models', {
+      method: 'HEAD',
+      timeout: 5000,
+    }, (res) => {
+      isHealthy = res.statusCode !== undefined && res.statusCode < 500;
+    });
+    
+    req.on('error', (err) => {
+      isHealthy = false;
+      console.error('[Proxy] Upstream health check failed:', err.message);
+    });
+    
+    req.on('timeout', () => {
+      isHealthy = false;
+      req.destroy();
+      console.error('[Proxy] Upstream health check timeout');
+    });
+    
+    req.end();
+  }, 30000);
 });
 
 // 优雅关闭
