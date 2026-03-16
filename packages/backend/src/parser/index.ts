@@ -27,14 +27,14 @@ function validateFilePath(filePath: string): boolean {
   return true;
 }
 
-// 解析单个 session 文件
-export function parseSessionFile(filePath: string): SessionMessage[] {
+// 解析单个 session 文件（异步）
+export async function parseSessionFile(filePath: string): Promise<SessionMessage[]> {
   // 安全验证
   if (!validateFilePath(filePath)) {
     throw new Error(`Invalid file path: ${filePath}`);
   }
   
-  const content = fs.readFileSync(filePath, 'utf-8');
+  const content = await fs.promises.readFile(filePath, 'utf-8');
   const lines = content.trim().split('\n');
   
   const messages: SessionMessage[] = [];
@@ -85,7 +85,7 @@ export async function parseAllSessions(): Promise<Chat[]> {
   for (const file of files) {
     try {
       const { agentId, sessionId } = extractSessionInfo(file);
-      const messages = parseSessionFile(file);
+      const messages = await parseSessionFile(file);
       
       // 提取 sessionKey
       const sessionStart = messages.find(m => m.type === 'session');
@@ -134,8 +134,8 @@ export async function parseAllSessions(): Promise<Chat[]> {
 }
 
 // 解析单个 session 文件，返回消息列表
-export function parseSessionMessages(filePath: string): Message[] {
-  const sessionMessages = parseSessionFile(filePath);
+export async function parseSessionMessages(filePath: string): Promise<Message[]> {
+  const sessionMessages = await parseSessionFile(filePath);
   const messages: Message[] = [];
   const { sessionId } = extractSessionInfo(filePath);
   

@@ -6,10 +6,10 @@ import type { ProxyLogEntry } from '../types';
 // 配置
 const LOG_DIR = process.env.LOG_DIR || '/var/log/openclaw-monitor';
 
-// 读取代理日志
-export function readProxyLogs(limit: number = 100): ProxyLogEntry[] {
+// 读取代理日志（异步）
+export async function readProxyLogs(limit: number = 100): Promise<ProxyLogEntry[]> {
   const pattern = path.join(LOG_DIR, 'llm-*.jsonl');
-  const files = glob.sync(pattern).sort().reverse(); // 最新的在前
+  const files = (await glob(pattern)).sort().reverse(); // 最新的在前
   
   const entries: ProxyLogEntry[] = [];
   
@@ -17,7 +17,7 @@ export function readProxyLogs(limit: number = 100): ProxyLogEntry[] {
     if (entries.length >= limit) break;
     
     try {
-      const content = fs.readFileSync(file, 'utf-8');
+      const content = await fs.promises.readFile(file, 'utf-8');
       const lines = content.trim().split('\n').reverse(); // 最新的在前
       
       for (const line of lines) {
@@ -38,9 +38,9 @@ export function readProxyLogs(limit: number = 100): ProxyLogEntry[] {
   return entries;
 }
 
-// 根据时间戳查找最近的代理日志
-export function findProxyLogByTimestamp(timestamp: number, toleranceMs: number = 5000): ProxyLogEntry | null {
-  const entries = readProxyLogs(1000);
+// 根据时间戳查找最近的代理日志（异步）
+export async function findProxyLogByTimestamp(timestamp: number, toleranceMs: number = 5000): Promise<ProxyLogEntry | null> {
+  const entries = await readProxyLogs(1000);
   
   for (const entry of entries) {
     if (Math.abs(entry.timestamp - timestamp) <= toleranceMs) {
@@ -51,11 +51,11 @@ export function findProxyLogByTimestamp(timestamp: number, toleranceMs: number =
   return null;
 }
 
-// 合并代理日志到消息
-export function enrichWithProxyLog(message: any): any {
+// 合并代理日志到消息（异步）
+export async function enrichWithProxyLog(message: any): Promise<any> {
   if (!message.timestamp) return message;
   
-  const proxyLog = findProxyLogByTimestamp(message.timestamp);
+  const proxyLog = await findProxyLogByTimestamp(message.timestamp);
   
   if (proxyLog && message.role === 'assistant') {
     // 添加 LLM 请求/响应详情

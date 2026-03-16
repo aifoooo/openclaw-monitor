@@ -9,7 +9,7 @@ const router = express.Router();
 // 缓存
 let chatsCache: Chat[] = [];
 let lastCacheUpdate = 0;
-const CACHE_TTL = 5000; // 5秒缓存
+const CACHE_TTL = parseInt(process.env.CACHE_TTL || '30000'); // 默认 30 秒缓存
 
 // 更新缓存
 async function updateCache() {
@@ -87,10 +87,12 @@ router.get('/messages', async (req, res) => {
       return res.status(404).json({ error: 'Chat not found' });
     }
     
-    const messages = parseSessionMessages(chat.sessionFile);
+    const messages = await parseSessionMessages(chat.sessionFile);
     
-    // 合并代理日志
-    const enrichedMessages = messages.map(msg => enrichWithProxyLog(msg));
+    // 合并代理日志（异步）
+    const enrichedMessages = await Promise.all(
+      messages.map(msg => enrichWithProxyLog(msg))
+    );
     
     res.json({ messages: enrichedMessages.slice(0, Number(limit)) });
   } catch (error) {
@@ -116,7 +118,7 @@ router.get('/operations', async (req, res) => {
     await updateCache();
     
     for (const chat of chatsCache) {
-      const messages = parseSessionMessages(chat.sessionFile);
+      const messages = await parseSessionMessages(chat.sessionFile);
       const msg = messages.find(m => m.id === messageId);
       
       if (msg && msg.operations) {

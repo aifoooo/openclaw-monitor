@@ -203,16 +203,35 @@ wss.on('connection', (ws, req) => {
   clients.add(ws);
   authenticatedClients.add(ws);
   
+  // 心跳机制
+  let isAlive = true;
+  const heartbeatInterval = setInterval(() => {
+    if (!isAlive) {
+      console.log('[WebSocket] Client timeout, terminating');
+      ws.terminate();
+      return;
+    }
+    
+    isAlive = false;
+    ws.ping();
+  }, 30000); // 30 秒心跳
+  
+  ws.on('pong', () => {
+    isAlive = true;
+  });
+  
   ws.on('close', () => {
     console.log('[WebSocket] Client disconnected');
     clients.delete(ws);
     authenticatedClients.delete(ws);
+    clearInterval(heartbeatInterval);
   });
   
   ws.on('error', (error) => {
     console.error('[WebSocket] Error:', error);
     clients.delete(ws);
     authenticatedClients.delete(ws);
+    clearInterval(heartbeatInterval);
   });
 });
 

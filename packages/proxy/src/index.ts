@@ -1,4 +1,5 @@
 import http from 'http';
+import https from 'https';
 import httpProxy from 'http-proxy';
 import fs from 'fs';
 import path from 'path';
@@ -11,6 +12,20 @@ const LOG_ROTATION_DAYS = parseInt(process.env.LOG_ROTATION_DAYS || '7');
 const MAX_RETRIES = parseInt(process.env.MAX_RETRIES || '3');
 const RETRY_DELAY = parseInt(process.env.RETRY_DELAY || '1000');
 const LOG_SENSITIVE_DATA = process.env.LOG_SENSITIVE_DATA === 'true';
+
+// 连接池配置
+const KEEP_ALIVE = process.env.KEEP_ALIVE !== 'false';
+const MAX_SOCKETS = parseInt(process.env.MAX_SOCKETS || '50');
+const MAX_FREE_SOCKETS = parseInt(process.env.MAX_FREE_SOCKETS || '10');
+const TIMEOUT = parseInt(process.env.TIMEOUT || '30000');
+
+// 创建连接池 Agent
+const agent = new https.Agent({
+  keepAlive: KEEP_ALIVE,
+  maxSockets: MAX_SOCKETS,
+  maxFreeSockets: MAX_FREE_SOCKETS,
+  timeout: TIMEOUT,
+});
 
 // 状态
 const startTime = Date.now();
@@ -133,6 +148,7 @@ const proxy = httpProxy.createProxyServer({
   target: TARGET_BASE_URL,
   changeOrigin: true,
   secure: true,
+  agent: agent, // 连接复用
 });
 
 // 创建服务器

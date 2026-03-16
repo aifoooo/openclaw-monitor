@@ -27,8 +27,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, watch } from 'vue';
 import axios from 'axios';
+import { debounce } from '../utils/performance';
 
 interface Channel {
   id: string;
@@ -81,6 +82,16 @@ async function loadChats() {
     console.error('Failed to load chats:', error);
   }
 }
+
+// 防抖搜索
+const debouncedSearch = debounce((query: string) => {
+  // 搜索逻辑已通过 computed 实现
+  console.log('Searching:', query);
+}, 300);
+
+watch(searchQuery, (newQuery) => {
+  debouncedSearch(newQuery);
+});
 
 function selectChat(chat: Chat) {
   selectedChat.value = chat;
