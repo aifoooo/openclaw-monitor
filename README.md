@@ -4,13 +4,20 @@
 
 ## 背景
 
-OpenClaw 服务器通常部署在云端，而用户在本地使用。当需要监控运行状态时，直接访问云端 Web UI 会面临：
+给龙虾发了消息，它很久不回，甚至直接不回。
 
-- **网络延迟高**：服务器在香港，用户在大陆，加载资源慢
-- **数据同步慢**：每次刷新都要重新拉取全量数据
-- **调试困难**：看不到 LLM 的原始输入输出
+**核心痛点**：
+- 不知道它在干嘛
+- 不知道卡在哪里
+- 不知道慢在哪里
+- 不知道哪里可以优化
 
-本项目通过**本地缓存 + 增量同步**解决这些问题，同时通过**HTTP 代理**捕获完整的 LLM 请求响应。
+本项目通过 **HTTP 代理拦截 LLM 请求**，让你看清龙虾的每一步操作：执行了什么命令、调用了什么 API、LLM 输入了什么、输出了什么。
+
+**顺便解决**：
+- 网络延迟高：本地缓存，无需每次刷新
+- 数据同步慢：增量更新，只拉取变化
+- 调试困难：完整的 LLM 输入输出记录
 
 ## 功能特性
 
@@ -82,6 +89,9 @@ sudo ./scripts/install.sh --dir /opt/openclaw-monitor --log-dir /var/log/opencla
 
 ### 配置文件
 
+<details>
+<summary>点击展开配置说明</summary>
+
 复制配置文件模板：
 
 ```bash
@@ -101,6 +111,8 @@ LOG_ROTATION_DAYS=7
 BACKEND_PORT=3000
 OPENCLAW_DIR=/root/.openclaw
 ```
+
+</details>
 
 安装脚本会自动：
 1. ✅ 检查依赖
@@ -210,6 +222,9 @@ RestartSec=3
 
 ## 安全配置
 
+<details>
+<summary>点击展开安全配置（生产环境必看）</summary>
+
 ### 生产环境必须配置
 
 ```bash
@@ -235,37 +250,13 @@ VITE_API_BASE=http://localhost:3000
 
 详细配置请参考 [安全配置指南](docs/security.md)。
 
+</details>
+
 ---
 
 ## 故障处理流程
 
-### 服务启动顺序
-
-```
-1. openclaw-proxy    (代理服务，监听 38080)
-2. openclaw-backend  (后端服务，监听 3000)
-3. openclaw-gateway  (OpenClaw Gateway)
-```
-
-**依赖关系**：
-- Gateway 依赖代理（baseUrl 指向代理）
-- 后端独立运行，不依赖其他服务
-
-**手动启动**：
-```bash
-# 按顺序启动
-systemctl start openclaw-proxy
-systemctl start openclaw-backend
-systemctl start openclaw-gateway
-```
-
-**手动停止**：
-```bash
-# 按相反顺序停止
-systemctl stop openclaw-gateway
-systemctl stop openclaw-backend
-systemctl stop openclaw-proxy
-```
+### 代理崩溃时
 
 ```
 代理崩溃
@@ -279,7 +270,7 @@ systemd 3秒内自动重启
 代理恢复后自动切回
 ```
 
-如果代理长时间无法恢复：
+### 代理长时间无法恢复时
 
 ```
 健康检查脚本检测到代理不可用
@@ -289,6 +280,20 @@ systemd 3秒内自动重启
 重启 Gateway（一次性中断）
     ↓
 之后所有请求都走直连，无额外延迟
+```
+
+### 手动启停
+
+```bash
+# 按顺序启动
+systemctl start openclaw-proxy
+systemctl start openclaw-backend
+systemctl start openclaw-gateway
+
+# 按相反顺序停止
+systemctl stop openclaw-gateway
+systemctl stop openclaw-backend
+systemctl stop openclaw-proxy
 ```
 
 ## 项目结构
