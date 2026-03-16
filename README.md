@@ -210,6 +210,34 @@ RestartSec=3
 
 ## 故障处理流程
 
+### 服务启动顺序
+
+```
+1. openclaw-proxy    (代理服务，监听 38080)
+2. openclaw-backend  (后端服务，监听 3000)
+3. openclaw-gateway  (OpenClaw Gateway)
+```
+
+**依赖关系**：
+- Gateway 依赖代理（baseUrl 指向代理）
+- 后端独立运行，不依赖其他服务
+
+**手动启动**：
+```bash
+# 按顺序启动
+systemctl start openclaw-proxy
+systemctl start openclaw-backend
+systemctl start openclaw-gateway
+```
+
+**手动停止**：
+```bash
+# 按相反顺序停止
+systemctl stop openclaw-gateway
+systemctl stop openclaw-backend
+systemctl stop openclaw-proxy
+```
+
 ```
 代理崩溃
     ↓
