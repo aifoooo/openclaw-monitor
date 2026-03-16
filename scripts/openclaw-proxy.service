@@ -1,0 +1,30 @@
+[Unit]
+Description=OpenClaw Monitor Proxy
+Documentation=https://github.com/aifoooo/openclaw-monitor
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/ws-mime-qq/openclaw-monitor/packages/proxy
+ExecStart=/root/.nvm/versions/node/v22.12.0/bin/node dist/index.js
+Restart=always
+RestartSec=3
+
+# 环境变量
+Environment=TARGET_URL=https://api.lkeap.cloud.tencent.com/coding/v3
+Environment=LOG_DIR=/var/log/openclaw-monitor
+Environment=NODE_ENV=production
+
+# 日志
+StandardOutput=journal
+StandardError=journal
+
+# 安全限制
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log/openclaw-monitor
+
+[Install]
+WantedBy=multi-user.target

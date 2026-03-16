@@ -1,0 +1,173 @@
+#!/bin/bash
+# OpenClaw Monitor - 安装脚本
+
+set -e
+
+echo "🦐 OpenClaw Monitor 安装脚本"
+echo "================================"
+
+# 颜色定义
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+# 默认配置
+INSTALL_DIR="${INSTALL_DIR:-/root/ws-mime-qq/openclaw-monitor}"
+OPENCLAW_CONFIG="${OPENCLAW_CONFIG:-/root/.openclaw/openclaw.json}"
+LOG_DIR="${LOG_DIR:-/var/log/openclaw-monitor}"
+
+# 检查依赖
+check_dependencies() {
+    echo -e "${YELLOW}检查依赖...${NC}"
+    
+    local missing=()
+    
+    # 检查 Node.js
+    if ! command -v node &> /dev/null; then
+        missing+=("node")
+    fi
+    
+    # 检查 pnpm
+    if ! command -v pnpm &> /dev/null; then
+        missing+=("pnpm")
+    fi
+    
+    # 检查 jq
+    if ! command -v jq &> /dev/null; then
+        missing+=("jq")
+    fi
+    
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        echo -e "${RED}缺少依赖: ${missing[*]}${NC}"
+        echo "请先安装缺少的依赖"
+        exit 1
+    fi
+    
+    echo -e "${GREEN}✓ 依赖检查通过${NC}"
+}
+
+# 创建日志目录
+create_log_dir() {
+    echo -e "${YELLOW}创建日志目录...${NC}"
+    mkdir -p "$LOG_DIR"
+    echo -e "${GREEN}✓ 日志目录: $LOG_DIR${NC}"
+}
+
+# 安装依赖
+install_dependencies() {
+    echo -e "${YELLOW}安装项目依赖...${NC}"
+    cd "$INSTALL_DIR"
+    pnpm install
+    echo -e "${GREEN}✓ 依赖安装完成${NC}"
+}
+
+# 构建项目
+build_project() {
+    echo -e "${YELLOW}构建项目...${NC}"
+    cd "$INSTALL_DIR"
+    pnpm build
+    echo -e "${GREEN}✓ 构建完成${NC}"
+}
+
+# 安装 systemd 服务
+install_systemd_service() {
+    echo -e "${YELLOW}安装 systemd 服务...${NC}"
+    
+    # 复制 service 文件
+    cp "$INSTALL_DIR/scripts/openclaw-proxy.service" /etc/systemd/system/
+    
+    # 重新加载 systemd
+    systemctl daemon-reload
+    
+    # 启用服务
+    systemctl enable openclaw-proxy
+    
+    echo -e "${GREEN}✓ systemd 服务已安装${NC}"
+}
+
+# 安装健康检查脚本
+install_healthcheck() {
+    echo -e "${YELLOW}安装健康检查脚本...${NC}"
+    
+    # 复制脚本
+    cp "$INSTALL_DIR/scripts/proxy-healthcheck.sh" /usr/local/bin/
+    chmod +x /usr/local/bin/proxy-healthcheck.sh
+    
+    # 添加 cron 任务
+    (crontab -l 2>/dev/null | grep -v "proxy-healthcheck.sh"; echo "* * * * * /usr/local/bin/proxy-healthcheck.sh") | crontab -
+    
+    echo -e "${GREEN}✓ 健康检查脚本已安装${NC}"
+}
+
+# 配置 OpenClaw
+configure_openclaw() {
+    echo -e "${YELLOW}配置 OpenClaw...${NC}"
+    
+    if [[ ! -f "$OPENCLAW_CONFIG" ]]; then
+        echo -e "${RED}OpenClaw 配置文件不存在: $OPENCLAW_CONFIG${NC}"
+        echo "请先配置 OpenClaw"
+        exit 1
+    fi
+    
+    # 备份配置
+    cp "$OPENCLAW_CONFIG" "$OPENCLAW_CONFIG.bak"
+    
+    # 修改 baseUrl
+    local proxy_url="http://localhost:38080/v3"
+    jq --arg url "$proxy_url" \
+        '.models.providers.tencentcodingplan.baseUrl = $url' \
+        "$OPENCLAW_CONFIG" > "$OPENCLAW_CONFIG.tmp" && \
+        mv "$OPENCLAW_CONFIG.tmp" "$OPENCLAW_CONFIG"
+    
+    echo -e "${GREEN}✓ OpenClaw 配置已更新${NC}"
+}
+
+# 启动服务
+start_services() {
+    echo -e "${YELLOW}启动服务...${NC}"
+    
+    # 启动代理
+    systemctl start openclaw-proxy
+    
+    # 重启 OpenClaw Gateway
+    systemctl restart openclaw-gateway
+    
+    echo -e "${GREEN}✓ 服务已启动${NC}"
+}
+
+# 显示状态
+show_status() {
+    echo ""
+    echo "================================"
+    echo -e "${GREEN}✅ 安装完成！${NC}"
+    echo ""
+    echo "服务状态:"
+    echo "  - 代理服务: $(systemctl is-active openclaw-proxy)"
+    echo "  - Gateway: $(systemctl is-active openclaw-gateway)"
+    echo ""
+    echo "日志位置:"
+    echo "  - 代理日志: $LOG_DIR/llm-YYYY-MM-DD.jsonl"
+    echo "  - 健康检查: $LOG_DIR/proxy-healthcheck.log"
+    echo ""
+    echo "常用命令:"
+    echo "  - 查看代理状态: systemctl status openclaw-proxy"
+    echo "  - 查看代理日志: journalctl -u openclaw-proxy -f"
+    echo "  - 重启代理: systemctl restart openclaw-proxy"
+    echo ""
+}
+
+# 主流程
+main() {
+    check_dependencies
+    create_log_dir
+    install_dependencies
+    build_project
+    install_systemd_service
+    install_healthcheck
+    configure_openclaw
+    start_services
+    show_status
+}
+
+main "$@"
