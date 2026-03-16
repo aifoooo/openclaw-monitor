@@ -1,0 +1,30 @@
+[Unit]
+Description=OpenClaw Monitor Backend
+Documentation=https://github.com/aifoooo/openclaw-monitor
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/ws-mime-qq/openclaw-monitor/packages/backend
+ExecStart=/root/.nvm/versions/node/v22.12.0/bin/node dist/index.js
+Restart=always
+RestartSec=3
+
+# 环境变量
+Environment=PORT=3000
+Environment=OPENCLAW_DIR=/root/.openclaw
+Environment=NODE_ENV=production
+
+# 日志
+StandardOutput=journal
+StandardError=journal
+
+# 安全限制
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/root/.openclaw
+
+[Install]
+WantedBy=multi-user.target

@@ -40,6 +40,8 @@ stop_services() {
     
     systemctl stop openclaw-proxy 2>/dev/null || true
     systemctl disable openclaw-proxy 2>/dev/null || true
+    systemctl stop openclaw-backend 2>/dev/null || true
+    systemctl disable openclaw-backend 2>/dev/null || true
     
     echo -e "${GREEN}✓ 服务已停止${NC}"
 }
@@ -49,6 +51,7 @@ remove_systemd_service() {
     echo -e "${YELLOW}删除 systemd 服务...${NC}"
     
     rm -f /etc/systemd/system/openclaw-proxy.service
+    rm -f /etc/systemd/system/openclaw-backend.service
     systemctl daemon-reload
     
     echo -e "${GREEN}✓ systemd 服务已删除${NC}"

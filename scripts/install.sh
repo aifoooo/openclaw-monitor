@@ -106,16 +106,22 @@ build_project() {
 install_systemd_service() {
     echo -e "${YELLOW}安装 systemd 服务...${NC}"
     
-    # 替换路径
+    # 替换路径并安装代理服务
     sed -e "s|/root/ws-mime-qq/openclaw-monitor|$INSTALL_DIR|g" \
         -e "s|/var/log/openclaw-monitor|$LOG_DIR|g" \
         "$INSTALL_DIR/scripts/openclaw-proxy.service" > /etc/systemd/system/openclaw-proxy.service
+    
+    # 替换路径并安装后端服务
+    sed -e "s|/root/ws-mime-qq/openclaw-monitor|$INSTALL_DIR|g" \
+        -e "s|/var/log/openclaw-monitor|$LOG_DIR|g" \
+        "$INSTALL_DIR/scripts/openclaw-backend.service" > /etc/systemd/system/openclaw-backend.service
     
     # 重新加载 systemd
     systemctl daemon-reload
     
     # 启用服务
     systemctl enable openclaw-proxy
+    systemctl enable openclaw-backend
     
     echo -e "${GREEN}✓ systemd 服务已安装${NC}"
 }
@@ -176,6 +182,19 @@ start_services() {
         echo -e "${RED}⚠ 代理服务启动失败，请检查日志${NC}"
     fi
     
+    # 启动后端
+    systemctl start openclaw-backend
+    
+    # 等待后端启动
+    sleep 2
+    
+    # 检查后端是否正常
+    if curl -s http://localhost:3000/health > /dev/null 2>&1; then
+        echo -e "${GREEN}✓ 后端服务正常${NC}"
+    else
+        echo -e "${RED}⚠ 后端服务启动失败，请检查日志${NC}"
+    fi
+    
     # 重启 OpenClaw Gateway
     systemctl restart openclaw-gateway
     
@@ -190,6 +209,7 @@ show_status() {
     echo ""
     echo "服务状态:"
     echo "  - 代理服务: $(systemctl is-active openclaw-proxy 2>/dev/null || echo 'unknown')"
+    echo "  - 后端服务: $(systemctl is-active openclaw-backend 2>/dev/null || echo 'unknown')"
     echo "  - Gateway: $(systemctl is-active openclaw-gateway 2>/dev/null || echo 'unknown')"
     echo ""
     echo "安装位置:"
@@ -198,9 +218,13 @@ show_status() {
     echo ""
     echo "常用命令:"
     echo "  - 查看代理状态: systemctl status openclaw-proxy"
+    echo "  - 查看后端状态: systemctl status openclaw-backend"
     echo "  - 查看代理日志: journalctl -u openclaw-proxy -f"
+    echo "  - 查看后端日志: journalctl -u openclaw-backend -f"
     echo "  - 重启代理: systemctl restart openclaw-proxy"
-    echo "  - 健康检查: curl http://localhost:38080/health"
+    echo "  - 重启后端: systemctl restart openclaw-backend"
+    echo "  - 代理健康检查: curl http://localhost:38080/health"
+    echo "  - 后端健康检查: curl http://localhost:3000/health"
     echo ""
     echo "卸载:"
     echo "  - $INSTALL_DIR/scripts/uninstall.sh"
