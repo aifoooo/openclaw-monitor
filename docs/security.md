@@ -28,7 +28,28 @@ LOG_SENSITIVE_DATA=false
 
 # CORS 限制（生产环境必须配置）
 CORS_ORIGIN=http://localhost:5173,https://your-frontend.com
+
+# IP 白名单（可选）
+IP_WHITELIST=192.168.1.0/24,10.0.0.1
+
+# 速率限制（可选）
+RATE_LIMIT_WINDOW=60000  # 1 分钟
+RATE_LIMIT_MAX=100       # 每分钟最多 100 次请求
 ```
+
+---
+
+## 安全措施列表
+
+| 措施 | 状态 | 说明 |
+|------|------|------|
+| Token 认证 | ✅ 必须 | API 和 WebSocket 都需要 |
+| CORS 限制 | ✅ 可配置 | 通过 `CORS_ORIGIN` 限制 |
+| 日志脱敏 | ✅ 默认开启 | 默认不记录敏感数据 |
+| 文件路径验证 | ✅ 已实现 | 防止路径遍历攻击 |
+| 速率限制 | ✅ 可配置 | 防止 DDoS 攻击 |
+| IP 白名单 | ✅ 可配置 | 限制访问 IP |
+| HTTPS 支持 | ✅ 可选 | 支持自签名证书 |
 
 ---
 

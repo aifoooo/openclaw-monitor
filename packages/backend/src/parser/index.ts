@@ -7,8 +7,33 @@ import type { SessionMessage, Chat, Message, Operation } from './types';
 const OPENCLAW_DIR = process.env.OPENCLAW_DIR || '/root/.openclaw';
 const AGENTS_DIR = path.join(OPENCLAW_DIR, 'agents');
 
+// 验证文件路径是否在允许的目录内
+function validateFilePath(filePath: string): boolean {
+  // 解析为绝对路径
+  const absolutePath = path.resolve(filePath);
+  
+  // 检查是否在 AGENTS_DIR 内
+  if (!absolutePath.startsWith(AGENTS_DIR)) {
+    console.error(`[Security] Path traversal attempt detected: ${filePath}`);
+    return false;
+  }
+  
+  // 检查是否包含 .. 或其他可疑模式
+  if (filePath.includes('..') || filePath.includes('\0')) {
+    console.error(`[Security] Invalid path pattern: ${filePath}`);
+    return false;
+  }
+  
+  return true;
+}
+
 // 解析单个 session 文件
 export function parseSessionFile(filePath: string): SessionMessage[] {
+  // 安全验证
+  if (!validateFilePath(filePath)) {
+    throw new Error(`Invalid file path: ${filePath}`);
+  }
+  
   const content = fs.readFileSync(filePath, 'utf-8');
   const lines = content.trim().split('\n');
   

@@ -14,6 +14,99 @@ const HTTPS_ENABLED = process.env.HTTPS_ENABLED === 'true';
 const HTTPS_KEY = process.env.HTTPS_KEY;
 const HTTPS_CERT = process.env.HTTPS_CERT;
 
+// 速率限制配置
+const RATE_LIMIT_WINDOW = parseInt(process.env.RATE_LIMIT_WINDOW || '60000'); // 1 分钟
+const RATE_LIMIT_MAX = parseInt(process.env.RATE_LIMIT_MAX || '100'); // 每分钟最多 100 次请求
+
+// IP 白名单
+const IP_WHITELIST = process.env.IP_WHITELIST?.split(',').map(s => s.trim()).filter(Boolean) || [];
+
+// IP 白名单检查
+function checkIpWhitelist(req: any, res: any, next: any) {
+  // 如果没有配置白名单，跳过检查
+  if (IP_WHITELIST.length === 0) {
+    return next();
+  }
+  
+  // 健康检查端点不检查白名单
+  if (req.path === '/health' || req.path === '/ready') {
+    return next();
+  }
+  
+  const ip = req.ip || req.connection.remoteAddress || 'unknown';
+  
+  // 支持 CIDR 和精确匹配
+  const isAllowed = IP_WHITELIST.some(allowed => {
+    if (allowed.includes('/')) {
+      // CIDR 匹配（简化版，只支持 /24 和 /32）
+      const [network, prefix] = allowed.split('/');
+      const ipParts = ip.split('.');
+      const networkParts = network.split('.');
+      
+      if (prefix === '32') {
+        return ip === network;
+      }
+      
+      if (prefix === '24') {
+        return ipParts.slice(0, 3).join('.') === networkParts.slice(0, 3).join('.');
+      }
+      
+      // 其他 CIDR 暂不支持，返回 false
+      return false;
+    }
+    
+    return ip === allowed;
+  });
+  
+  if (!isAllowed) {
+    console.warn(`[Security] IP not in whitelist: ${ip}`);
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  
+  next();
+}
+
+// 简单的速率限制（基于内存）
+const rateLimitMap = new Map<string, { count: number; resetTime: number }>();
+
+function rateLimit(req: any, res: any, next: any) {
+  // 健康检查端点不限速
+  if (req.path === '/health' || req.path === '/ready') {
+    return next();
+  }
+  
+  const ip = req.ip || req.connection.remoteAddress || 'unknown';
+  const now = Date.now();
+  
+  const record = rateLimitMap.get(ip);
+  
+  if (!record || now > record.resetTime) {
+    // 新窗口
+    rateLimitMap.set(ip, { count: 1, resetTime: now + RATE_LIMIT_WINDOW });
+    return next();
+  }
+  
+  if (record.count >= RATE_LIMIT_MAX) {
+    return res.status(429).json({
+      error: 'Too Many Requests',
+      retryAfter: Math.ceil((record.resetTime - now) / 1000),
+    });
+  }
+  
+  record.count++;
+  next();
+}
+
+// 定期清理过期的速率限制记录
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, record] of rateLimitMap.entries()) {
+    if (now > record.resetTime) {
+      rateLimitMap.delete(ip);
+    }
+  }
+}, 60000);
+
 let server: any;
 if (HTTPS_ENABLED && HTTPS_KEY && HTTPS_CERT) {
   const httpsOptions = {
@@ -82,6 +175,8 @@ if (CORS_ORIGIN) {
 }
 
 app.use(express.json());
+app.use(checkIpWhitelist); // IP 白名单检查
+app.use(rateLimit); // 速率限制
 app.use(requireAuth);
 
 // API 路由
