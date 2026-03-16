@@ -9,6 +9,9 @@ const app = express();
 const server = createServer(app);
 const wss = new WebSocketServer({ server });
 
+// 状态
+const startTime = Date.now();
+
 // 中间件
 app.use(cors());
 app.use(express.json());
@@ -46,7 +49,25 @@ export function broadcast(event: string, data: any) {
 
 // 健康检查
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok' });
+  const uptime = Math.floor((Date.now() - startTime) / 1000);
+  const memUsage = process.memoryUsage();
+  
+  res.json({
+    status: 'ok',
+    uptime,
+    uptimeHuman: `${Math.floor(uptime / 3600)}h ${Math.floor((uptime % 3600) / 60)}m ${uptime % 60}s`,
+    websocketClients: clients.size,
+    memory: {
+      heapUsed: Math.round(memUsage.heapUsed / 1024 / 1024),
+      heapTotal: Math.round(memUsage.heapTotal / 1024 / 1024),
+      rss: Math.round(memUsage.rss / 1024 / 1024),
+    },
+  });
+});
+
+// 就绪检查
+app.get('/ready', (req, res) => {
+  res.json({ ready: true });
 });
 
 // 启动服务器
@@ -64,12 +85,33 @@ server.listen(PORT, () => {
 });
 
 // 优雅关闭
-process.on('SIGTERM', () => {
-  console.log('[Backend] Shutting down...');
+let isShuttingDown = false;
+
+function gracefulShutdown(signal: string) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  
+  console.log(`[Backend] Received ${signal}, shutting down gracefully...`);
+  
+  // 关闭所有 WebSocket 连接
+  for (const client of clients) {
+    client.close();
+  }
+  
+  // 停止接受新连接
   server.close(() => {
     console.log('[Backend] Server closed');
     process.exit(0);
   });
-});
+  
+  // 强制退出超时
+  setTimeout(() => {
+    console.error('[Backend] Forced shutdown after timeout');
+    process.exit(1);
+  }, 10000);
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 export { app, server };
