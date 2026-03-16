@@ -3,10 +3,10 @@ import https from 'https';
 import httpProxy from 'http-proxy';
 import fs from 'fs';
 import path from 'path';
+import { loadRoutes, matchRoute, getAllProviders } from './router';
 
 // 配置
 const PROXY_PORT = parseInt(process.env.PROXY_PORT || '38080');
-const TARGET_BASE_URL = process.env.TARGET_URL || 'https://api.lkeap.cloud.tencent.com/coding/v3';
 const LOG_DIR = process.env.LOG_DIR || '/var/log/openclaw-monitor';
 const LOG_ROTATION_DAYS = parseInt(process.env.LOG_ROTATION_DAYS || '7');
 const MAX_RETRIES = parseInt(process.env.MAX_RETRIES || '3');
@@ -19,13 +19,23 @@ const MAX_SOCKETS = parseInt(process.env.MAX_SOCKETS || '50');
 const MAX_FREE_SOCKETS = parseInt(process.env.MAX_FREE_SOCKETS || '10');
 const TIMEOUT = parseInt(process.env.TIMEOUT || '30000');
 
-// 创建连接池 Agent
-const agent = new https.Agent({
-  keepAlive: KEEP_ALIVE,
-  maxSockets: MAX_SOCKETS,
-  maxFreeSockets: MAX_FREE_SOCKETS,
-  timeout: TIMEOUT,
-});
+// 为每个 provider 创建独立的连接池
+const agentPool: Record<string, https.Agent> = {};
+
+function getAgent(target: string): https.Agent {
+  const host = new URL(target).host;
+  
+  if (!agentPool[host]) {
+    agentPool[host] = new https.Agent({
+      keepAlive: KEEP_ALIVE,
+      maxSockets: MAX_SOCKETS,
+      maxFreeSockets: MAX_FREE_SOCKETS,
+      timeout: TIMEOUT,
+    });
+  }
+  
+  return agentPool[host];
+}
 
 // 状态
 const startTime = Date.now();
@@ -53,7 +63,6 @@ function getLogFilePath(): string {
 // 脱敏敏感数据
 function sanitizeData(data: any): any {
   if (!LOG_SENSITIVE_DATA) {
-    // 不记录敏感数据
     if (typeof data === 'string') {
       return data.length > 100 ? `[${data.length} chars, logging disabled]` : '[logging disabled]';
     }
@@ -77,7 +86,6 @@ function sanitizeMessages(messages: any[]): any[] {
 
 // 写入日志
 function writeLog(entry: any): void {
-  // 脱敏处理
   const sanitizedEntry = {
     ...entry,
     request: {
@@ -147,19 +155,30 @@ function parseSSEData(data: string): any[] {
   return chunks;
 }
 
-// 创建代理
-const proxy = httpProxy.createProxyServer({
-  target: TARGET_BASE_URL,
-  changeOrigin: true,
-  secure: true,
-  agent: agent, // 连接复用
-});
+// 创建代理实例池
+const proxyPool: Record<string, httpProxy> = {};
+
+function getProxy(target: string): httpProxy {
+  if (!proxyPool[target]) {
+    proxyPool[target] = httpProxy.createProxyServer({
+      target,
+      changeOrigin: true,
+      secure: true,
+      agent: getAgent(target),
+    });
+  }
+  
+  return proxyPool[target];
+}
 
 // 创建服务器
 const server = http.createServer((req, res) => {
   // 健康检查端点
   if (req.url === '/health' && req.method === 'GET') {
     const uptime = Math.floor((Date.now() - startTime) / 1000);
+    const routes = loadRoutes();
+    const providers = getAllProviders(routes);
+    
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       status: isHealthy ? 'ok' : 'degraded',
@@ -170,7 +189,7 @@ const server = http.createServer((req, res) => {
       lastRequestTime: lastRequestTime ? new Date(lastRequestTime).toISOString() : null,
       lastHeartbeat: new Date(lastHeartbeat).toISOString(),
       upstreamHealthy: isHealthy,
-      target: TARGET_BASE_URL,
+      providers,
     }));
     return;
   }
@@ -181,6 +200,25 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify({ ready: true }));
     return;
   }
+  
+  // 加载路由配置
+  const routes = loadRoutes();
+  
+  // 匹配路由
+  const matched = matchRoute(req.url || '/', routes);
+  
+  if (!matched) {
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      error: 'Route not found',
+      path: req.url,
+      availableRoutes: Object.keys(routes.routes),
+    }));
+    return;
+  }
+  
+  const { name: provider, config, targetPath } = matched;
+  const target = config.target;
   
   const startTimeThisRequest = Date.now();
   requestCount++;
@@ -219,11 +257,9 @@ const server = http.createServer((req, res) => {
   res.end = function(chunk: any, ...args: any[]): any {
     if (chunk) resChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     
-    // 记录日志
     const durationMs = Date.now() - startTimeThisRequest;
     const resBodyStr = Buffer.concat(resChunks).toString('utf-8');
     
-    // 统计错误
     if (res.statusCode && res.statusCode >= 400) {
       errorCount++;
     }
@@ -232,24 +268,25 @@ const server = http.createServer((req, res) => {
       let resBody: any;
       
       if (isStreaming) {
-        // 流式响应：解析 SSE 数据
         resBody = {
           type: 'stream',
           chunks: parseSSEData(resBodyStr),
           raw: resBodyStr.length > 10000 ? resBodyStr.slice(0, 10000) + '...(truncated)' : resBodyStr,
         };
       } else {
-        // 非流式响应
         resBody = tryParseJson(resBodyStr);
       }
       
       const logEntry = {
         timestamp: startTimeThisRequest,
+        provider,
         durationMs,
         isStreaming,
         request: {
           method: req.method,
           path: req.url,
+          targetPath,
+          target,
           headers: {
             'content-type': req.headers['content-type'],
             'authorization': req.headers['authorization'] ? '(redacted)' : undefined,
@@ -264,7 +301,7 @@ const server = http.createServer((req, res) => {
       };
       
       writeLog(logEntry);
-      console.log(`[Proxy] ${req.method} ${req.url} - ${res.statusCode} (${durationMs}ms, ${isStreaming ? 'streaming' : 'non-streaming'})`);
+      console.log(`[Proxy] ${provider} ${req.method} ${req.url} -> ${target}${targetPath} - ${res.statusCode} (${durationMs}ms)`);
     } catch (e) {
       console.error('[Proxy] Failed to log request:', e);
     }
@@ -272,36 +309,46 @@ const server = http.createServer((req, res) => {
     return originalEnd(chunk, ...args);
   }.bind(res);
 
+  // 获取代理实例
+  const proxy = getProxy(target);
+  
   // 转发请求（带重试）
   let retryCount = 0;
   
   function forwardRequest() {
+    // 修改请求路径
+    const originalUrl = req.url;
+    req.url = targetPath;
+    
     proxy.web(req, res, {
-      target: TARGET_BASE_URL,
+      target,
       changeOrigin: true,
     }, (error) => {
       retryCount++;
       
-      // 判断是否应该重试
+      // 类型断言：res 是 http.ServerResponse
+      const serverRes = res as import('http').ServerResponse;
+      
       const shouldRetry = retryCount < MAX_RETRIES && 
-                          !res.headersSent &&
+                          !serverRes.headersSent &&
                           isRetryableError(error);
       
       if (shouldRetry) {
-        console.warn(`[Proxy] Request failed (attempt ${retryCount}/${MAX_RETRIES}), retrying in ${RETRY_DELAY}ms:`, error.message);
+        console.warn(`[Proxy] Request failed (attempt ${retryCount}/${MAX_RETRIES}), retrying:`, error.message);
         
         setTimeout(() => {
           forwardRequest();
         }, RETRY_DELAY);
       } else {
         errorCount++;
-        console.error('[Proxy] Error after ${retryCount} attempts:', error.message);
+        console.error(`[Proxy] Error after ${retryCount} attempts:`, error.message);
         
-        if (!res.headersSent) {
-          res.writeHead(502, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ 
+        if (!serverRes.headersSent) {
+          serverRes.writeHead(502, { 'Content-Type': 'application/json' });
+          serverRes.end(JSON.stringify({ 
             error: 'Proxy Error', 
             message: error.message,
+            provider,
             retries: retryCount 
           }));
         }
@@ -329,56 +376,46 @@ function isRetryableError(error: Error): boolean {
 }
 
 // 错误处理
-proxy.on('error', (err, req, res) => {
-  errorCount++;
-  console.error('[Proxy] Proxy error:', err.message);
-  if (res && !res.headersSent) {
-    res.writeHead(502, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Proxy Error', message: err.message }));
-  }
-});
+function setupProxyErrorHandlers() {
+  Object.values(proxyPool).forEach(proxy => {
+    proxy.on('error', (err, req, res) => {
+      errorCount++;
+      console.error('[Proxy] Proxy error:', err.message);
+      if (res && !res.headersSent) {
+        res.writeHead(502, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Proxy Error', message: err.message }));
+      }
+    });
+  });
+}
 
 // 启动服务器
 async function startServer() {
-  // 确保日志目录存在
   await ensureLogDir();
+  
+  // 预加载路由配置
+  const routes = loadRoutes();
+  const providers = getAllProviders(routes);
+  
+  // 预创建代理实例
+  Object.values(routes.routes).forEach(route => {
+    getProxy(route.target);
+  });
+  
+  setupProxyErrorHandlers();
   
   server.listen(PROXY_PORT, () => {
     console.log(`[Proxy] Server started on http://localhost:${PROXY_PORT}`);
-    console.log(`[Proxy] Forwarding to ${TARGET_BASE_URL}`);
+    console.log(`[Proxy] Providers: ${providers.join(', ')}`);
     console.log(`[Proxy] Logging to ${LOG_DIR}`);
     console.log(`[Proxy] Health check: http://localhost:${PROXY_PORT}/health`);
     
-    // 启动时清理旧日志
     cleanOldLogs();
-    
-    // 每天清理一次旧日志
     setInterval(cleanOldLogs, 24 * 60 * 60 * 1000);
     
-    // 心跳检测（每30秒）
+    // 心跳检测
     setInterval(() => {
       lastHeartbeat = Date.now();
-      
-      // 检查上游 API 是否可达
-      const req = http.request(TARGET_BASE_URL + '/models', {
-        method: 'HEAD',
-        timeout: 5000,
-      }, (res) => {
-        isHealthy = res.statusCode !== undefined && res.statusCode < 500;
-      });
-      
-      req.on('error', (err) => {
-        isHealthy = false;
-        console.error('[Proxy] Upstream health check failed:', err.message);
-      });
-      
-      req.on('timeout', () => {
-        isHealthy = false;
-        req.destroy();
-        console.error('[Proxy] Upstream health check timeout');
-      });
-      
-      req.end();
     }, 30000);
   });
 }
@@ -397,13 +434,11 @@ function gracefulShutdown(signal: string) {
   
   console.log(`[Proxy] Received ${signal}, shutting down gracefully...`);
   
-  // 停止接受新连接
   server.close(() => {
     console.log('[Proxy] Server closed');
     process.exit(0);
   });
   
-  // 强制退出超时
   setTimeout(() => {
     console.error('[Proxy] Forced shutdown after timeout');
     process.exit(1);
