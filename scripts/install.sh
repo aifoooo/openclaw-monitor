@@ -12,10 +12,42 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
+# 解析命令行参数
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --dir|-d)
+            INSTALL_DIR="$2"
+            shift 2
+            ;;
+        --log-dir|-l)
+            LOG_DIR="$2"
+            shift 2
+            ;;
+        --help|-h)
+            echo "用法: $0 [选项]"
+            echo ""
+            echo "选项:"
+            echo "  --dir, -d DIR      安装目录 (默认: 当前目录)"
+            echo "  --log-dir, -l DIR  日志目录 (默认: /var/log/openclaw-monitor)"
+            echo "  --help, -h         显示帮助"
+            exit 0
+            ;;
+        *)
+            echo "未知选项: $1"
+            exit 1
+            ;;
+    esac
+done
+
 # 默认配置
-INSTALL_DIR="${INSTALL_DIR:-/root/ws-mime-qq/openclaw-monitor}"
-OPENCLAW_CONFIG="${OPENCLAW_CONFIG:-/root/.openclaw/openclaw.json}"
+INSTALL_DIR="${INSTALL_DIR:-$(pwd)}"
 LOG_DIR="${LOG_DIR:-/var/log/openclaw-monitor}"
+OPENCLAW_CONFIG="${OPENCLAW_CONFIG:-/root/.openclaw/openclaw.json}"
+
+echo "安装配置:"
+echo "  - 安装目录: $INSTALL_DIR"
+echo "  - 日志目录: $LOG_DIR"
+echo ""
 
 # 检查依赖
 check_dependencies() {
@@ -74,8 +106,10 @@ build_project() {
 install_systemd_service() {
     echo -e "${YELLOW}安装 systemd 服务...${NC}"
     
-    # 复制 service 文件
-    cp "$INSTALL_DIR/scripts/openclaw-proxy.service" /etc/systemd/system/
+    # 替换路径
+    sed -e "s|/root/ws-mime-qq/openclaw-monitor|$INSTALL_DIR|g" \
+        -e "s|/var/log/openclaw-monitor|$LOG_DIR|g" \
+        "$INSTALL_DIR/scripts/openclaw-proxy.service" > /etc/systemd/system/openclaw-proxy.service
     
     # 重新加载 systemd
     systemctl daemon-reload
@@ -90,8 +124,10 @@ install_systemd_service() {
 install_healthcheck() {
     echo -e "${YELLOW}安装健康检查脚本...${NC}"
     
-    # 复制脚本
-    cp "$INSTALL_DIR/scripts/proxy-healthcheck.sh" /usr/local/bin/
+    # 替换路径并复制脚本
+    sed -e "s|/root/ws-mime-qq/openclaw-monitor|$INSTALL_DIR|g" \
+        -e "s|/var/log/openclaw-monitor|$LOG_DIR|g" \
+        "$INSTALL_DIR/scripts/proxy-healthcheck.sh" > /usr/local/bin/proxy-healthcheck.sh
     chmod +x /usr/local/bin/proxy-healthcheck.sh
     
     # 添加 cron 任务
@@ -130,6 +166,16 @@ start_services() {
     # 启动代理
     systemctl start openclaw-proxy
     
+    # 等待代理启动
+    sleep 2
+    
+    # 检查代理是否正常
+    if curl -s http://localhost:38080/health > /dev/null 2>&1; then
+        echo -e "${GREEN}✓ 代理服务正常${NC}"
+    else
+        echo -e "${RED}⚠ 代理服务启动失败，请检查日志${NC}"
+    fi
+    
     # 重启 OpenClaw Gateway
     systemctl restart openclaw-gateway
     
@@ -143,17 +189,21 @@ show_status() {
     echo -e "${GREEN}✅ 安装完成！${NC}"
     echo ""
     echo "服务状态:"
-    echo "  - 代理服务: $(systemctl is-active openclaw-proxy)"
-    echo "  - Gateway: $(systemctl is-active openclaw-gateway)"
+    echo "  - 代理服务: $(systemctl is-active openclaw-proxy 2>/dev/null || echo 'unknown')"
+    echo "  - Gateway: $(systemctl is-active openclaw-gateway 2>/dev/null || echo 'unknown')"
     echo ""
-    echo "日志位置:"
-    echo "  - 代理日志: $LOG_DIR/llm-YYYY-MM-DD.jsonl"
-    echo "  - 健康检查: $LOG_DIR/proxy-healthcheck.log"
+    echo "安装位置:"
+    echo "  - 项目目录: $INSTALL_DIR"
+    echo "  - 日志目录: $LOG_DIR"
     echo ""
     echo "常用命令:"
     echo "  - 查看代理状态: systemctl status openclaw-proxy"
     echo "  - 查看代理日志: journalctl -u openclaw-proxy -f"
     echo "  - 重启代理: systemctl restart openclaw-proxy"
+    echo "  - 健康检查: curl http://localhost:38080/health"
+    echo ""
+    echo "卸载:"
+    echo "  - $INSTALL_DIR/scripts/uninstall.sh"
     echo ""
 }
 
