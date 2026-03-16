@@ -38,43 +38,7 @@ graph TB
 
 ## 三、关键逻辑
 
-### 3.1 代理拦截 (packages/proxy/src/index.ts)
-
-**核心流程**：
-
-```typescript
-// 1. 接收请求
-server.on('request', (req, res) => {
-  // 2. 收集请求体
-  collectRequestBody(req);
-  
-  // 3. 转发到真实 API
-  proxy.web(req, res, { target: TARGET_URL });
-});
-
-// 4. 拦截响应
-res.on('end', () => {
-  // 5. 解析流式响应 (SSE)
-  if (isStreaming) {
-    chunks = parseSSEData(resBody);
-  }
-  
-  // 6. 写入日志
-  writeLog({
-    timestamp,
-    request: { body: reqBody },
-    response: { body: resBody },
-    isStreaming
-  });
-});
-```
-
-**关键点**：
-- 流式响应需要特殊处理（解析 SSE 格式）
-- 日志按日期分文件（`llm-YYYY-MM-DD.jsonl`）
-- 不修改请求内容，只记录
-
-### 3.2 Session 文件解析 (packages/backend/src/parser/index.ts)
+### 3.1 Session 文件解析 (packages/backend/src/parser/index.ts)
 
 **Session 文件格式**：
 
@@ -111,6 +75,42 @@ function parseSessionFile(filePath: string) {
 - `type: "session"` 是会话元信息
 - `type: "message"` 是消息记录
 - `message.content` 可能是字符串或数组
+
+### 3.2 代理拦截 (packages/proxy/src/index.ts)
+
+**核心流程**：
+
+```typescript
+// 1. 接收请求
+server.on('request', (req, res) => {
+  // 2. 收集请求体
+  collectRequestBody(req);
+  
+  // 3. 转发到真实 API
+  proxy.web(req, res, { target: TARGET_URL });
+});
+
+// 4. 拦截响应
+res.on('end', () => {
+  // 5. 解析流式响应 (SSE)
+  if (isStreaming) {
+    chunks = parseSSEData(resBody);
+  }
+  
+  // 6. 写入日志
+  writeLog({
+    timestamp,
+    request: { body: reqBody },
+    response: { body: resBody },
+    isStreaming
+  });
+});
+```
+
+**关键点**：
+- 流式响应需要特殊处理（解析 SSE 格式）
+- 日志按日期分文件（`llm-YYYY-MM-DD.jsonl`）
+- 不修改请求内容，只记录
 
 ### 3.3 代理日志合并 (packages/backend/src/parser/proxy-log.ts)
 
