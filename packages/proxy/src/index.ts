@@ -4,9 +4,16 @@ import fs from 'fs';
 import path from 'path';
 
 // 配置
-const PROXY_PORT = 38080;
+const PROXY_PORT = parseInt(process.env.PROXY_PORT || '38080');
 const TARGET_BASE_URL = process.env.TARGET_URL || 'https://api.lkeap.cloud.tencent.com/coding/v3';
 const LOG_DIR = process.env.LOG_DIR || '/var/log/openclaw-monitor';
+const LOG_ROTATION_DAYS = parseInt(process.env.LOG_ROTATION_DAYS || '7');
+
+// 状态
+const startTime = Date.now();
+let requestCount = 0;
+let errorCount = 0;
+let lastRequestTime: number | null = null;
 
 // 确保日志目录存在
 if (!fs.existsSync(LOG_DIR)) {
@@ -24,6 +31,25 @@ function writeLog(entry: any): void {
   const logFile = getLogFilePath();
   const line = JSON.stringify(entry) + '\n';
   fs.appendFileSync(logFile, line);
+}
+
+// 清理过期日志
+function cleanOldLogs(): void {
+  const files = fs.readdirSync(LOG_DIR);
+  const now = Date.now();
+  const maxAge = LOG_ROTATION_DAYS * 24 * 60 * 60 * 1000;
+  
+  for (const file of files) {
+    if (!file.startsWith('llm-') || !file.endsWith('.jsonl')) continue;
+    
+    const filePath = path.join(LOG_DIR, file);
+    const stat = fs.statSync(filePath);
+    
+    if (now - stat.mtime.getTime() > maxAge) {
+      console.log(`[Proxy] Deleting old log: ${file}`);
+      fs.unlinkSync(filePath);
+    }
+  }
 }
 
 // 尝试解析 JSON
@@ -65,7 +91,33 @@ const proxy = httpProxy.createProxyServer({
 
 // 创建服务器
 const server = http.createServer((req, res) => {
-  const startTime = Date.now();
+  // 健康检查端点
+  if (req.url === '/health' && req.method === 'GET') {
+    const uptime = Math.floor((Date.now() - startTime) / 1000);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      status: 'ok',
+      uptime,
+      uptimeHuman: `${Math.floor(uptime / 3600)}h ${Math.floor((uptime % 3600) / 60)}m ${uptime % 60}s`,
+      requestCount,
+      errorCount,
+      lastRequestTime: lastRequestTime ? new Date(lastRequestTime).toISOString() : null,
+      target: TARGET_BASE_URL,
+    }));
+    return;
+  }
+  
+  // 就绪检查端点
+  if (req.url === '/ready' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ready: true }));
+    return;
+  }
+  
+  const startTimeThisRequest = Date.now();
+  requestCount++;
+  lastRequestTime = startTimeThisRequest;
+  
   let reqBody: any = null;
   let isStreaming = false;
   const resChunks: Buffer[] = [];
@@ -100,8 +152,13 @@ const server = http.createServer((req, res) => {
     if (chunk) resChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     
     // 记录日志
-    const durationMs = Date.now() - startTime;
+    const durationMs = Date.now() - startTimeThisRequest;
     const resBodyStr = Buffer.concat(resChunks).toString('utf-8');
+    
+    // 统计错误
+    if (res.statusCode && res.statusCode >= 400) {
+      errorCount++;
+    }
     
     try {
       let resBody: any;
@@ -119,7 +176,7 @@ const server = http.createServer((req, res) => {
       }
       
       const logEntry = {
-        timestamp: startTime,
+        timestamp: startTimeThisRequest,
         durationMs,
         isStreaming,
         request: {
@@ -144,7 +201,7 @@ const server = http.createServer((req, res) => {
       console.error('[Proxy] Failed to log request:', e);
     }
     
-    return originalEndRes(chunk, ...args);
+    return originalEnd(chunk, ...args);
   }.bind(res);
 
   // 转发请求
@@ -152,6 +209,7 @@ const server = http.createServer((req, res) => {
     target: TARGET_BASE_URL,
     changeOrigin: true,
   }, (error) => {
+    errorCount++;
     console.error('[Proxy] Error:', error.message);
     if (!res.headersSent) {
       res.writeHead(502, { 'Content-Type': 'application/json' });
@@ -162,6 +220,7 @@ const server = http.createServer((req, res) => {
 
 // 错误处理
 proxy.on('error', (err, req, res) => {
+  errorCount++;
   console.error('[Proxy] Proxy error:', err.message);
   if (res && !res.headersSent) {
     res.writeHead(502, { 'Content-Type': 'application/json' });
@@ -174,13 +233,36 @@ server.listen(PROXY_PORT, () => {
   console.log(`[Proxy] Server started on http://localhost:${PROXY_PORT}`);
   console.log(`[Proxy] Forwarding to ${TARGET_BASE_URL}`);
   console.log(`[Proxy] Logging to ${LOG_DIR}`);
+  console.log(`[Proxy] Health check: http://localhost:${PROXY_PORT}/health`);
+  
+  // 启动时清理旧日志
+  cleanOldLogs();
+  
+  // 每天清理一次旧日志
+  setInterval(cleanOldLogs, 24 * 60 * 60 * 1000);
 });
 
 // 优雅关闭
-process.on('SIGTERM', () => {
-  console.log('[Proxy] Shutting down...');
+let isShuttingDown = false;
+
+function gracefulShutdown(signal: string) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  
+  console.log(`[Proxy] Received ${signal}, shutting down gracefully...`);
+  
+  // 停止接受新连接
   server.close(() => {
     console.log('[Proxy] Server closed');
     process.exit(0);
   });
-});
+  
+  // 强制退出超时
+  setTimeout(() => {
+    console.error('[Proxy] Forced shutdown after timeout');
+    process.exit(1);
+  }, 10000);
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
