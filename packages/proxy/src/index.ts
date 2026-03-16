@@ -35,9 +35,13 @@ let lastRequestTime: number | null = null;
 let lastHeartbeat: number = Date.now();
 let isHealthy = true;
 
-// 确保日志目录存在
-if (!fs.existsSync(LOG_DIR)) {
-  fs.mkdirSync(LOG_DIR, { recursive: true });
+// 异步确保日志目录存在
+async function ensureLogDir() {
+  try {
+    await fs.promises.access(LOG_DIR);
+  } catch {
+    await fs.promises.mkdir(LOG_DIR, { recursive: true });
+  }
 }
 
 // 获取日志文件路径
@@ -335,43 +339,53 @@ proxy.on('error', (err, req, res) => {
 });
 
 // 启动服务器
-server.listen(PROXY_PORT, () => {
-  console.log(`[Proxy] Server started on http://localhost:${PROXY_PORT}`);
-  console.log(`[Proxy] Forwarding to ${TARGET_BASE_URL}`);
-  console.log(`[Proxy] Logging to ${LOG_DIR}`);
-  console.log(`[Proxy] Health check: http://localhost:${PROXY_PORT}/health`);
+async function startServer() {
+  // 确保日志目录存在
+  await ensureLogDir();
   
-  // 启动时清理旧日志
-  cleanOldLogs();
-  
-  // 每天清理一次旧日志
-  setInterval(cleanOldLogs, 24 * 60 * 60 * 1000);
-  
-  // 心跳检测（每30秒）
-  setInterval(() => {
-    lastHeartbeat = Date.now();
+  server.listen(PROXY_PORT, () => {
+    console.log(`[Proxy] Server started on http://localhost:${PROXY_PORT}`);
+    console.log(`[Proxy] Forwarding to ${TARGET_BASE_URL}`);
+    console.log(`[Proxy] Logging to ${LOG_DIR}`);
+    console.log(`[Proxy] Health check: http://localhost:${PROXY_PORT}/health`);
     
-    // 检查上游 API 是否可达
-    const req = http.request(TARGET_BASE_URL + '/models', {
-      method: 'HEAD',
-      timeout: 5000,
-    }, (res) => {
-      isHealthy = res.statusCode !== undefined && res.statusCode < 500;
-    });
+    // 启动时清理旧日志
+    cleanOldLogs();
     
-    req.on('error', (err) => {
-      isHealthy = false;
-      console.error('[Proxy] Upstream health check failed:', err.message);
-    });
+    // 每天清理一次旧日志
+    setInterval(cleanOldLogs, 24 * 60 * 60 * 1000);
     
-    req.on('timeout', () => {
-      isHealthy = false;
-      req.destroy();
-      console.error('[Proxy] Upstream health check timeout');
-    });
-    
-    req.end();
-  }, 30000);
+    // 心跳检测（每30秒）
+    setInterval(() => {
+      lastHeartbeat = Date.now();
+      
+      // 检查上游 API 是否可达
+      const req = http.request(TARGET_BASE_URL + '/models', {
+        method: 'HEAD',
+        timeout: 5000,
+      }, (res) => {
+        isHealthy = res.statusCode !== undefined && res.statusCode < 500;
+      });
+      
+      req.on('error', (err) => {
+        isHealthy = false;
+        console.error('[Proxy] Upstream health check failed:', err.message);
+      });
+      
+      req.on('timeout', () => {
+        isHealthy = false;
+        req.destroy();
+        console.error('[Proxy] Upstream health check timeout');
+      });
+      
+      req.end();
+    }, 30000);
+  });
+}
+
+startServer().catch((error) => {
+  console.error('[Proxy] Failed to start server:', error);
+  process.exit(1);
 });
 
 // 优雅关闭

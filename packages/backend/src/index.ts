@@ -107,20 +107,6 @@ setInterval(() => {
   }
 }, 60000);
 
-let server: any;
-if (HTTPS_ENABLED && HTTPS_KEY && HTTPS_CERT) {
-  const httpsOptions = {
-    key: fs.readFileSync(HTTPS_KEY),
-    cert: fs.readFileSync(HTTPS_CERT),
-  };
-  server = createHttpsServer(httpsOptions, app);
-  console.log('[Backend] HTTPS enabled');
-} else {
-  server = createServer(app);
-}
-
-const wss = new WebSocketServer({ server });
-
 // 状态
 const startTime = Date.now();
 
@@ -186,54 +172,57 @@ app.use('/api', routes);
 const clients = new Set<WebSocket>();
 const authenticatedClients = new Set<WebSocket>();
 
-wss.on('connection', (ws, req) => {
-  // WebSocket Token 认证
-  if (API_TOKEN) {
-    const url = new URL(req.url || '', `http://localhost:${PORT}`);
-    const token = url.searchParams.get('token');
-    
-    if (token !== API_TOKEN) {
-      console.warn('[WebSocket] Unauthorized connection attempt');
-      ws.close(1008, 'Unauthorized');
-      return;
-    }
-  }
-  
-  console.log('[WebSocket] Client connected');
-  clients.add(ws);
-  authenticatedClients.add(ws);
-  
-  // 心跳机制
-  let isAlive = true;
-  const heartbeatInterval = setInterval(() => {
-    if (!isAlive) {
-      console.log('[WebSocket] Client timeout, terminating');
-      ws.terminate();
-      return;
+// WebSocket 设置函数
+function setupWebSocket(wss: WebSocketServer) {
+  wss.on('connection', (ws, req) => {
+    // WebSocket Token 认证
+    if (API_TOKEN) {
+      const url = new URL(req.url || '', `http://localhost:${PORT}`);
+      const token = url.searchParams.get('token');
+      
+      if (token !== API_TOKEN) {
+        console.warn('[WebSocket] Unauthorized connection attempt');
+        ws.close(1008, 'Unauthorized');
+        return;
+      }
     }
     
-    isAlive = false;
-    ws.ping();
-  }, 30000); // 30 秒心跳
-  
-  ws.on('pong', () => {
-    isAlive = true;
+    console.log('[WebSocket] Client connected');
+    clients.add(ws);
+    authenticatedClients.add(ws);
+    
+    // 心跳机制
+    let isAlive = true;
+    const heartbeatInterval = setInterval(() => {
+      if (!isAlive) {
+        console.log('[WebSocket] Client timeout, terminating');
+        ws.terminate();
+        return;
+      }
+      
+      isAlive = false;
+      ws.ping();
+    }, 30000); // 30 秒心跳
+    
+    ws.on('pong', () => {
+      isAlive = true;
+    });
+    
+    ws.on('close', () => {
+      console.log('[WebSocket] Client disconnected');
+      clients.delete(ws);
+      authenticatedClients.delete(ws);
+      clearInterval(heartbeatInterval);
+    });
+    
+    ws.on('error', (error) => {
+      console.error('[WebSocket] Error:', error);
+      clients.delete(ws);
+      authenticatedClients.delete(ws);
+      clearInterval(heartbeatInterval);
+    });
   });
-  
-  ws.on('close', () => {
-    console.log('[WebSocket] Client disconnected');
-    clients.delete(ws);
-    authenticatedClients.delete(ws);
-    clearInterval(heartbeatInterval);
-  });
-  
-  ws.on('error', (error) => {
-    console.error('[WebSocket] Error:', error);
-    clients.delete(ws);
-    authenticatedClients.delete(ws);
-    clearInterval(heartbeatInterval);
-  });
-});
+}
 
 // 广播消息
 export function broadcast(event: string, data: any) {
@@ -270,46 +259,81 @@ app.get('/ready', (req, res) => {
 
 // 启动服务器
 const PORT = process.env.PORT || 3000;
+const startTime = Date.now();
 
-server.listen(PORT, () => {
-  console.log(`[Backend] Server started on http://localhost:${PORT}`);
-  console.log(`[Backend] WebSocket available at ws://localhost:${PORT}`);
+// 异步启动服务器
+async function startServer() {
+  let server: any;
   
-  // 启动文件监听
-  createWatcher((data) => {
-    // 广播 session 更新
-    broadcast('session:update', data);
-  });
-});
-
-// 优雅关闭
-let isShuttingDown = false;
-
-function gracefulShutdown(signal: string) {
-  if (isShuttingDown) return;
-  isShuttingDown = true;
-  
-  console.log(`[Backend] Received ${signal}, shutting down gracefully...`);
-  
-  // 关闭所有 WebSocket 连接
-  for (const client of clients) {
-    client.close();
+  if (HTTPS_ENABLED && HTTPS_KEY && HTTPS_CERT) {
+    try {
+      const [key, cert] = await Promise.all([
+        fs.promises.readFile(HTTPS_KEY),
+        fs.promises.readFile(HTTPS_CERT),
+      ]);
+      
+      const httpsOptions = { key, cert };
+      server = createHttpsServer(httpsOptions, app);
+      console.log('[Backend] HTTPS enabled');
+    } catch (error) {
+      console.error('[Backend] Failed to read HTTPS certificates:', error);
+      process.exit(1);
+    }
+  } else {
+    server = createServer(app);
   }
   
-  // 停止接受新连接
-  server.close(() => {
-    console.log('[Backend] Server closed');
-    process.exit(0);
-  });
-  
-  // 强制退出超时
-  setTimeout(() => {
-    console.error('[Backend] Forced shutdown after timeout');
-    process.exit(1);
-  }, 10000);
+  return server;
 }
 
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-
-export { app, server };
+// 启动服务器
+startServer().then((server) => {
+  const wss = new WebSocketServer({ server });
+  
+  // WebSocket 设置
+  setupWebSocket(wss);
+  
+  // 启动监听
+  server.listen(PORT, () => {
+    console.log(`[Backend] Server started on ${HTTPS_ENABLED ? 'https' : 'http'}://localhost:${PORT}`);
+    console.log(`[Backend] WebSocket available at ${HTTPS_ENABLED ? 'wss' : 'ws'}://localhost:${PORT}`);
+    
+    // 启动文件监听
+    createWatcher((data) => {
+      broadcast('session:update', data);
+    });
+  });
+  
+  // 优雅关闭
+  let isShuttingDown = false;
+  
+  function gracefulShutdown(signal: string) {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+    
+    console.log(`[Backend] Received ${signal}, shutting down gracefully...`);
+    
+    // 关闭所有 WebSocket 连接
+    for (const client of clients) {
+      client.close();
+    }
+    
+    // 停止接受新连接
+    server.close(() => {
+      console.log('[Backend] Server closed');
+      process.exit(0);
+    });
+    
+    // 强制退出超时
+    setTimeout(() => {
+      console.error('[Backend] Forced shutdown after timeout');
+      process.exit(1);
+    }, 10000);
+  }
+  
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+}).catch((error) => {
+  console.error('[Backend] Failed to start server:', error);
+  process.exit(1);
+});

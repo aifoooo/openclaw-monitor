@@ -137,6 +137,9 @@ onMounted(() => {
 .chat-items {
   max-height: 600px;
   overflow-y: auto;
+  /* 优化滚动性能 */
+  will-change: transform;
+  -webkit-overflow-scrolling: touch;
 }
 
 .chat-item {

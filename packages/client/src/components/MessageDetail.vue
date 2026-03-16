@@ -145,6 +145,14 @@ onMounted(() => {
   padding: 20px;
 }
 
+.message-list {
+  max-height: 70vh;
+  overflow-y: auto;
+  /* 优化滚动性能 */
+  will-change: transform;
+  -webkit-overflow-scrolling: touch;
+}
+
 .message {
   margin-bottom: 24px;
   padding: 16px;
