@@ -205,12 +205,18 @@ LOG_ROTATION_DAYS=7
 MAX_RETRIES=3
 RETRY_DELAY=1000
 
+# 日志配置
+LOG_SENSITIVE_DATA=false
+
 # 后端配置
 PORT=3000
 OPENCLAW_DIR=/root/.openclaw
 
 # 安全配置
 API_TOKEN=$api_token
+
+# CORS 配置（生产环境必须限制）
+# CORS_ORIGIN=http://localhost:5173,https://your-frontend.com
 
 # HTTPS 配置（可选）
 HTTPS_ENABLED=false
@@ -227,6 +233,10 @@ EOF
     echo ""
     echo "前端配置（.env）："
     echo "  VITE_API_TOKEN=$api_token"
+    echo ""
+    echo "安全建议："
+    echo "  1. 生产环境请设置 CORS_ORIGIN 限制允许的源"
+    echo "  2. 如需记录敏感数据，设置 LOG_SENSITIVE_DATA=true"
     echo "================================"
     echo ""
 }

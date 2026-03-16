@@ -65,7 +65,22 @@ function requireAuth(req: any, res: any, next: any) {
 }
 
 // 中间件
-app.use(cors());
+const CORS_ORIGIN = process.env.CORS_ORIGIN;
+
+if (CORS_ORIGIN) {
+  // 限制指定的源
+  const origins = CORS_ORIGIN.split(',').map(s => s.trim());
+  app.use(cors({
+    origin: origins,
+    credentials: true,
+  }));
+  console.log('[Backend] CORS restricted to:', origins);
+} else {
+  // 默认全开放（开发环境）
+  app.use(cors());
+  console.warn('[Backend] CORS is open (not recommended for production)');
+}
+
 app.use(express.json());
 app.use(requireAuth);
 

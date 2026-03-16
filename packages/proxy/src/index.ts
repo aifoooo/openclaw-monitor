@@ -10,6 +10,7 @@ const LOG_DIR = process.env.LOG_DIR || '/var/log/openclaw-monitor';
 const LOG_ROTATION_DAYS = parseInt(process.env.LOG_ROTATION_DAYS || '7');
 const MAX_RETRIES = parseInt(process.env.MAX_RETRIES || '3');
 const RETRY_DELAY = parseInt(process.env.RETRY_DELAY || '1000');
+const LOG_SENSITIVE_DATA = process.env.LOG_SENSITIVE_DATA === 'true';
 
 // 状态
 const startTime = Date.now();
@@ -30,10 +31,51 @@ function getLogFilePath(): string {
   return path.join(LOG_DIR, `llm-${date}.jsonl`);
 }
 
+// 脱敏敏感数据
+function sanitizeData(data: any): any {
+  if (!LOG_SENSITIVE_DATA) {
+    // 不记录敏感数据
+    if (typeof data === 'string') {
+      return data.length > 100 ? `[${data.length} chars, logging disabled]` : '[logging disabled]';
+    }
+    if (typeof data === 'object' && data !== null) {
+      return '[object, logging disabled]';
+    }
+  }
+  return data;
+}
+
+// 脱敏消息内容
+function sanitizeMessages(messages: any[]): any[] {
+  if (!LOG_SENSITIVE_DATA || !Array.isArray(messages)) {
+    return messages.map((msg: any) => ({
+      ...msg,
+      content: sanitizeData(msg.content),
+    }));
+  }
+  return messages;
+}
+
 // 写入日志
 function writeLog(entry: any): void {
+  // 脱敏处理
+  const sanitizedEntry = {
+    ...entry,
+    request: {
+      ...entry.request,
+      body: entry.request?.body ? {
+        ...entry.request.body,
+        messages: sanitizeMessages(entry.request.body.messages || []),
+      } : entry.request?.body,
+    },
+    response: {
+      ...entry.response,
+      body: sanitizeData(entry.response?.body),
+    },
+  };
+  
   const logFile = getLogFilePath();
-  const line = JSON.stringify(entry) + '\n';
+  const line = JSON.stringify(sanitizedEntry) + '\n';
   fs.appendFileSync(logFile, line);
 }
 
