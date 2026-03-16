@@ -1,16 +1,17 @@
 #!/bin/bash
-# OpenClaw Monitor - 代理健康检查脚本
-# 用于检测代理是否可用，自动切换配置
+# OpenClaw Monitor - 服务健康检查脚本
+# 用于检测代理和后端是否可用，自动切换配置
 
 set -e
 
 # 配置
 PROXY_URL="${PROXY_URL:-http://localhost:38080/health}"
+BACKEND_URL="${BACKEND_URL:-http://localhost:3000/health}"
 CONFIG_FILE="${CONFIG_FILE:-/root/.openclaw/openclaw.json}"
 LOG_DIR="${LOG_DIR:-/var/log/openclaw-monitor}"
-LOG_FILE="$LOG_DIR/proxy-healthcheck.log"
-LOCK_FILE="/tmp/proxy-healthcheck.lock"
-COOLDOWN_FILE="/tmp/proxy-healthcheck-cooldown"
+LOG_FILE="$LOG_DIR/healthcheck.log"
+LOCK_FILE="/tmp/healthcheck.lock"
+COOLDOWN_FILE="/tmp/healthcheck-cooldown"
 COOLDOWN_SECONDS=300  # 切换后冷却 5 分钟
 
 # 代理和直连的 baseUrl
@@ -48,6 +49,20 @@ get_current_baseurl() {
 check_proxy() {
     curl -s --max-time 5 "$PROXY_URL" > /dev/null 2>&1
     return $?
+}
+
+# 检测后端是否可用
+check_backend() {
+    curl -s --max-time 5 "$BACKEND_URL" > /dev/null 2>&1
+    return $?
+}
+
+# 重启服务
+restart_services() {
+    log "重启代理和后端服务"
+    systemctl restart openclaw-proxy 2>/dev/null || true
+    systemctl restart openclaw-backend 2>/dev/null || true
+    sleep 2
 }
 
 # 切换到直连
@@ -115,11 +130,43 @@ main() {
     # 检查冷却期
     check_cooldown
     
-    # 检测代理并切换
-    if check_proxy; then
-        switch_to_proxy
-    else
+    # 检查代理
+    local proxy_ok=true
+    if ! check_proxy; then
+        log "代理不可用"
+        proxy_ok=false
+        # 尝试重启代理
+        systemctl restart openclaw-proxy 2>/dev/null || true
+        sleep 2
+        if check_proxy; then
+            log "代理重启成功"
+            proxy_ok=true
+        else
+            log "代理重启失败"
+        fi
+    fi
+    
+    # 检查后端
+    local backend_ok=true
+    if ! check_backend; then
+        log "后端不可用"
+        backend_ok=false
+        # 尝试重启后端
+        systemctl restart openclaw-backend 2>/dev/null || true
+        sleep 2
+        if check_backend; then
+            log "后端重启成功"
+            backend_ok=true
+        else
+            log "后端重启失败"
+        fi
+    fi
+    
+    # 如果代理不可用，切换到直连
+    if [[ "$proxy_ok" == "false" ]]; then
         switch_to_direct
+    else
+        switch_to_proxy
     fi
 }
 
