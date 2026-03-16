@@ -210,19 +210,61 @@ const server = http.createServer((req, res) => {
     return originalEnd(chunk, ...args);
   }.bind(res);
 
-  // 转发请求
-  proxy.web(req, res, {
-    target: TARGET_BASE_URL,
-    changeOrigin: true,
-  }, (error) => {
-    errorCount++;
-    console.error('[Proxy] Error:', error.message);
-    if (!res.headersSent) {
-      res.writeHead(502, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Proxy Error', message: error.message }));
-    }
-  });
+  // 转发请求（带重试）
+  let retryCount = 0;
+  
+  function forwardRequest() {
+    proxy.web(req, res, {
+      target: TARGET_BASE_URL,
+      changeOrigin: true,
+    }, (error) => {
+      retryCount++;
+      
+      // 判断是否应该重试
+      const shouldRetry = retryCount < MAX_RETRIES && 
+                          !res.headersSent &&
+                          isRetryableError(error);
+      
+      if (shouldRetry) {
+        console.warn(`[Proxy] Request failed (attempt ${retryCount}/${MAX_RETRIES}), retrying in ${RETRY_DELAY}ms:`, error.message);
+        
+        setTimeout(() => {
+          forwardRequest();
+        }, RETRY_DELAY);
+      } else {
+        errorCount++;
+        console.error('[Proxy] Error after ${retryCount} attempts:', error.message);
+        
+        if (!res.headersSent) {
+          res.writeHead(502, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ 
+            error: 'Proxy Error', 
+            message: error.message,
+            retries: retryCount 
+          }));
+        }
+      }
+    });
+  }
+  
+  forwardRequest();
 });
+
+// 判断是否是可重试的错误
+function isRetryableError(error: Error): boolean {
+  const retryableMessages = [
+    'ECONNRESET',
+    'ETIMEDOUT',
+    'ENOTFOUND',
+    'ECONNREFUSED',
+    'socket hang up',
+    'network',
+    'timeout',
+  ];
+  
+  const message = error.message.toLowerCase();
+  return retryableMessages.some(msg => message.includes(msg.toLowerCase()));
+}
 
 // 错误处理
 proxy.on('error', (err, req, res) => {
