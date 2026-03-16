@@ -17,35 +17,21 @@
 
 ## 二、核心架构
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  OpenClaw Gateway                                          │
-│  baseUrl: http://localhost:38080/v3                        │
-└─────────────────────┬───────────────────────────────────────┘
-                      │ HTTP 请求
-                      ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Proxy (packages/proxy)                                    │
-│  - 拦截请求，记录 body                                      │
-│  - 转发到真实 API                                           │
-│  - 拦截响应，记录 body                                      │
-│  - 写入日志: /var/log/openclaw-monitor/llm-*.jsonl         │
-└─────────────────────┬───────────────────────────────────────┘
-                      │
-                      ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Backend (packages/backend)                                │
-│  - 解析 session 文件                                        │
-│  - 合并代理日志                                             │
-│  - REST API + WebSocket                                     │
-└─────────────────────┬───────────────────────────────────────┘
-                      │
-                      ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Client (packages/client)                                  │
-│  - Vue 3 前端                                               │
-│  - 展示渠道、聊天、消息、操作                                │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+graph TB
+    GW[OpenClaw Gateway<br/>baseUrl: localhost:38080/v3]
+    P[Proxy<br/>拦截请求，记录 body<br/>转发 API，记录响应]
+    BE[Backend<br/>解析 session 文件<br/>合并代理日志<br/>REST API + WebSocket]
+    CL[Client<br/>Vue 3 前端<br/>展示渠道、聊天、消息、操作]
+    
+    GW -->|HTTP 请求| P
+    P -->|转发| API[LLM API]
+    API -->|响应| P
+    P -->|记录| Log[(Proxy Logs)]
+    P --> BE
+    BE --> CL
+    
+    BE -->|解析| SF[(Session Files)]
 ```
 
 ---
@@ -234,58 +220,47 @@ fi
 
 ### 5.1 LLM 调用流程
 
-```
-1. 用户发送消息
-   ↓
-2. OpenClaw Gateway 发起 LLM 调用
-   POST http://localhost:38080/v3/chat/completions
-   Body: { messages: [...], model: "glm-5", stream: true }
-   ↓
-3. Proxy 接收请求
-   - 记录请求 body
-   - 转发到真实 API
-   POST https://api.lkeap.cloud.tencent.com/coding/v3/chat/completions
-   ↓
-4. Proxy 接收响应
-   - 解析 SSE 流
-   - 记录响应 chunks
-   - 写入日志
-   ↓
-5. 返回给 OpenClaw Gateway
-   ↓
-6. OpenClaw 写入 session 文件
-   ↓
-7. Backend 监听到文件变更
-   - 解析新消息
-   - 合并代理日志
-   - 推送到前端
+```mermaid
+sequenceDiagram
+    participant U as 用户
+    participant GW as Gateway
+    participant P as Proxy
+    participant API as LLM API
+    participant Log as Proxy Logs
+    participant SF as Session File
+    participant BE as Backend
+    participant CL as Client
+    
+    U->>GW: 发送消息
+    GW->>P: POST /v3/chat/completions
+    Note over P: 记录请求 body
+    P->>Log: 写入日志
+    P->>API: 转发请求
+    API-->>P: 响应
+    Note over P: 记录响应 chunks
+    P->>Log: 写入日志
+    P-->>GW: 返回响应
+    GW->>SF: 写入 session 文件
+    BE->>SF: 监听变更
+    BE->>BE: 解析新消息
+    BE->>BE: 合并代理日志
+    BE->>CL: 推送更新
 ```
 
 ### 5.2 故障处理流程
 
-```
-代理崩溃
-    ↓
-systemd 3秒自动重启 (Restart=always, RestartSec=3)
-    ↓
-重启期间请求失败
-    ↓
-模型降级链自动降级
-    tencentcodingplan/glm-5 → tencentcodingplan/hunyuan-2.0-thinking → deepseek/deepseek-reasoner
-    ↓
-代理恢复后自动切回
-```
-
-**长时间故障**：
-
-```
-健康检查脚本检测到代理不可用（每分钟检查）
-    ↓
-修改配置，切换到直连
-    ↓
-重启 Gateway（一次性中断）
-    ↓
-之后所有请求都走直连
+```mermaid
+flowchart TD
+    A[代理崩溃] --> B[systemd 3秒自动重启]
+    B --> C{重启成功?}
+    C -->|是| D[自动切回代理]
+    C -->|否| E[模型降级链降级]
+    E --> F[glm-5 → hunyuan → deepseek]
+    
+    G[代理长时间无法恢复] --> H[健康检查脚本检测]
+    H --> I[修改配置切换直连]
+    I --> J[重启 Gateway]
+    J --> K[所有请求走直连]
 ```
 
 ---

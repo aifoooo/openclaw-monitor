@@ -9,32 +9,28 @@
 
 ### 1.1 整体架构图
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                           OpenClaw Monitor                              │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐                │
-│  │   Client    │    │   Backend   │    │    Proxy    │                │
-│  │  (Tauri)    │◄──►│   (Node)    │◄──►│   (Node)    │                │
-│  │             │    │             │    │             │                │
-│  │ Vue 3 + TS  │    │ Express + WS│    │ http-proxy  │                │
-│  │ SQLite      │    │ chokidar    │    │             │                │
-│  └─────────────┘    └──────┬──────┘    └──────┬──────┘                │
-│                            │                   │                        │
-│                            ▼                   ▼                        │
-│                    ┌───────────────┐   ┌───────────────┐               │
-│                    │ Session Files │   │  Proxy Logs   │               │
-│                    │   (*.jsonl)   │   │   (*.jsonl)   │               │
-│                    └───────────────┘   └───────────────┘               │
-│                            ▲                   ▲                        │
-│                            │                   │                        │
-│                    ┌──────┴──────┐    ┌──────┴──────┐                │
-│                    │ OpenClaw    │    │ LLM API     │                │
-│                    │ Gateway     │    │ (腾讯云)    │                │
-│                    └─────────────┘    └─────────────┘                │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
+```mermaid
+graph TB
+    subgraph OpenClaw Monitor
+        Client[Client<br/>Vue 3 + TS]
+        Backend[Backend<br/>Express + WS]
+        Proxy[Proxy<br/>http-proxy]
+        
+        Client <--> Backend
+        Backend <--> Proxy
+        
+        SessionFiles[(Session Files<br/>*.jsonl)]
+        ProxyLogs[(Proxy Logs<br/>*.jsonl)]
+        
+        Backend --> SessionFiles
+        Proxy --> ProxyLogs
+    end
+    
+    Gateway[OpenClaw Gateway]
+    LLMAPI[LLM API<br/>腾讯云]
+    
+    Gateway --> Proxy
+    Proxy --> LLMAPI
 ```
 
 ### 1.2 组件职责
@@ -51,24 +47,13 @@
 
 ### 2.1 实体关系图
 
-```
-Channel (渠道)
-    │
-    │ 1:N
-    ▼
-Chat (聊天)
-    │
-    │ 1:N
-    ▼
-Message (消息)
-    │
-    │ 1:N
-    ▼
-Operation (操作)
-    │
-    ├── ToolCall (工具调用)
-    │
-    └── LLMCall (LLM 调用)
+```mermaid
+erDiagram
+    Channel ||--o{ Chat : "1:N"
+    Chat ||--o{ Message : "1:N"
+    Message ||--o{ Operation : "1:N"
+    Operation ||--o| ToolCall : "contains"
+    Operation ||--o| LLMCall : "contains"
 ```
 
 ### 2.2 数据结构
@@ -175,69 +160,52 @@ interface LLMCall {
 
 ### 3.1 LLM 调用流程
 
-```
-1. OpenClaw Gateway 发起 LLM 调用
-   │
-   │ POST http://localhost:38080/v3/chat/completions
-   │ Body: { messages: [...], model: "glm-5", ... }
-   │
-   ▼
-2. Proxy 接收请求
-   │
-   ├─► 记录请求 body 到日志
-   │   /var/log/openclaw-monitor/llm-YYYY-MM-DD.jsonl
-   │
-   ├─► 转发到真实 API
-   │   POST https://api.lkeap.cloud.tencent.com/coding/v3/chat/completions
-   │
-   ▼
-3. Proxy 接收响应
-   │
-   ├─► 记录响应 body 到日志
-   │
-   └─► 返回给 OpenClaw Gateway
+```mermaid
+sequenceDiagram
+    participant GW as OpenClaw Gateway
+    participant P as Proxy
+    participant API as LLM API
+    participant Log as Proxy Logs
+    
+    GW->>P: POST /v3/chat/completions
+    Note over P: 记录请求 body
+    P->>Log: 写入日志
+    P->>API: 转发请求
+    API-->>P: 响应
+    Note over P: 记录响应 body
+    P->>Log: 写入日志
+    P-->>GW: 返回响应
 ```
 
 ### 3.2 Session 文件更新流程
 
-```
-1. OpenClaw 写入 session 文件
-   │
-   │ /root/.openclaw/agents/mime-qq/sessions/xxx.jsonl
-   │
-   ▼
-2. Backend (chokidar) 监听到文件变更
-   │
-   ├─► 读取新增的行
-   │
-   ├─► 解析 JSON
-   │
-   ├─► 更新内存缓存
-   │
-   └─► 通过 WebSocket 推送更新
-       │
-       ▼
-3. Client 接收更新
-   │
-   └─► 更新 UI
+```mermaid
+sequenceDiagram
+    participant OC as OpenClaw
+    participant SF as Session File
+    participant BE as Backend
+    participant WS as WebSocket
+    participant CL as Client
+    
+    OC->>SF: 写入 session 文件
+    BE->>SF: chokidar 监听变更
+    BE->>BE: 读取新增行
+    BE->>BE: 解析 JSON
+    BE->>BE: 更新内存缓存
+    BE->>WS: 推送更新
+    WS->>CL: 实时更新
+    CL->>CL: 更新 UI
 ```
 
 ### 3.3 数据合并流程
 
-```
-Backend 启动时：
-  │
-  ├─► 扫描 session 文件目录
-  │   /root/.openclaw/agents/*/sessions/*.jsonl
-  │
-  ├─► 解析所有 session 文件
-  │
-  ├─► 扫描代理日志
-  │   /var/log/openclaw-monitor/llm-*.jsonl
-  │
-  └─► 合并数据
-      │
-      └─► 根据 timestamp + sessionKey 关联
+```mermaid
+flowchart TD
+    A[Backend 启动] --> B[扫描 session 文件目录]
+    B --> C[解析所有 session 文件]
+    C --> D[扫描代理日志]
+    D --> E[合并数据]
+    E --> F[根据 timestamp + sessionKey 关联]
 ```
 
 ---
@@ -368,35 +336,21 @@ ws://localhost:3000/ws
 
 ### 5.1 代理架构
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Proxy Server (localhost:38080)                            │
-│                                                             │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │ Request Handler                                      │   │
-│  │                                                      │   │
-│  │ 1. 接收请求                                          │   │
-│  │ 2. 提取 sessionKey (从 header 或 body)              │   │
-│  │ 3. 记录请求日志                                      │   │
-│  │ 4. 转发到真实 API                                    │   │
-│  └─────────────────────────────────────────────────────┘   │
-│                                                             │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │ Response Handler                                     │   │
-│  │                                                      │   │
-│  │ 1. 接收响应                                          │   │
-│  │ 2. 处理流式响应 (SSE)                                │   │
-│  │ 3. 记录响应日志                                      │   │
-│  │ 4. 返回给客户端                                      │   │
-│  └─────────────────────────────────────────────────────┘   │
-│                                                             │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │ Log Writer                                           │   │
-│  │                                                      │   │
-│  │ - 写入 /var/log/openclaw-monitor/llm-YYYY-MM-DD.jsonl│   │
-│  │ - 格式: {timestamp, sessionKey, request, response}   │   │
-│  └─────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph Proxy["Proxy Server (localhost:38080)"]
+        RH[Request Handler<br/>接收请求 → 提取 sessionKey → 记录日志 → 转发]
+        RespH[Response Handler<br/>接收响应 → 处理 SSE → 记录日志 → 返回]
+        LW[Log Writer<br/>写入 llm-YYYY-MM-DD.jsonl]
+        
+        RH --> RespH
+        RespH --> LW
+    end
+    
+    GW[OpenClaw Gateway] --> RH
+    RespH --> GW
+    RH --> API[LLM API]
+    API --> RespH
 ```
 
 ### 5.2 日志格式
@@ -431,34 +385,37 @@ ws://localhost:3000/ws
 
 ### 6.1 页面结构
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Header: OpenClaw Monitor              [渠道选择 ▼] [设置] │
-├──────────────┬──────────────────────────────────────────────┤
-│              │                                              │
-│  Sidebar     │  Main Content                                │
-│              │                                              │
-│  ┌────────┐  │  ┌────────────────────────────────────────┐ │
-│  │ 搜索   │  │  │ Message List                           │ │
-│  └────────┘  │  │                                        │ │
-│              │  │ 👤 User (18:00:01)                     │ │
-│  聊天列表    │  │ │ 你好                                   │ │
-│              │  │                                        │ │
-│  ○ 用户A    │  │ 🤖 Assistant (18:00:05)                │ │
-│    18:00    │  │ │ 你好！有什么可以帮助你的？              │ │
-│    3条消息  │  │ │                                        │ │
-│              │  │ ├─ Operations ─────────────────────────│ │
-│  ● 用户B    │  │ │ 📁 read: memory.md        50ms       │ │
-│    17:45    │  │ │    Input: {"file_path": "..."}        │ │
-│    5条消息  │  │ │    Output: 文件内容...                 │ │
-│              │  │ │                                       │ │
-│  ○ 用户C    │  │ │ 🤖 LLM: glm-5            1200ms      │ │
-│    16:30    │  │ │    Input: 15920 tokens                │ │
-│    2条消息  │  │ │    Output: 489 tokens                 │ │
-│              │  │ │    [查看完整 prompt] [查看完整响应]   │ │
-│              │  │ └────────────────────────────────────────┘ │
-│              │                                              │
-└──────────────┴──────────────────────────────────────────────┘
+```mermaid
+graph TB
+    subgraph Layout
+        Header["Header: OpenClaw Monitor [渠道选择 ▼] [设置]"]
+        Sidebar[Sidebar]
+        Main[Main Content]
+        
+        Header --- Sidebar
+        Header --- Main
+    end
+    
+    subgraph Sidebar
+        Search[搜索]
+        ChatList[聊天列表]
+    end
+    
+    subgraph Main
+        MsgList[Message List]
+        UserMsg["👤 User 消息"]
+        AsstMsg["🤖 Assistant 消息"]
+        Ops[Operations]
+        
+        MsgList --> UserMsg
+        MsgList --> AsstMsg
+        AsstMsg --> Ops
+        
+        subgraph Ops
+            ToolOp["📁 read: memory.md<br/>50ms"]
+            LLMOp["🤖 LLM: glm-5<br/>1200ms"]
+        end
+    end
 ```
 
 ### 6.2 组件结构
