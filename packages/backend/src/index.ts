@@ -1,46 +1,115 @@
 import express from 'express';
 import cors from 'cors';
 import { createServer } from 'http';
+import { createServer as createHttpsServer } from 'https';
 import { WebSocketServer, WebSocket } from 'ws';
 import routes from './routes';
 import { createWatcher } from './watcher';
+import fs from 'fs';
 
 const app = express();
-const server = createServer(app);
+
+// HTTPS 配置
+const HTTPS_ENABLED = process.env.HTTPS_ENABLED === 'true';
+const HTTPS_KEY = process.env.HTTPS_KEY;
+const HTTPS_CERT = process.env.HTTPS_CERT;
+
+let server: any;
+if (HTTPS_ENABLED && HTTPS_KEY && HTTPS_CERT) {
+  const httpsOptions = {
+    key: fs.readFileSync(HTTPS_KEY),
+    cert: fs.readFileSync(HTTPS_CERT),
+  };
+  server = createHttpsServer(httpsOptions, app);
+  console.log('[Backend] HTTPS enabled');
+} else {
+  server = createServer(app);
+}
+
 const wss = new WebSocketServer({ server });
 
 // 状态
 const startTime = Date.now();
 
+// Token 认证
+const API_TOKEN = process.env.API_TOKEN;
+
+// Token 认证中间件
+function requireAuth(req: any, res: any, next: any) {
+  // 健康检查端点不需要认证
+  if (req.path === '/health' || req.path === '/ready') {
+    return next();
+  }
+  
+  // 如果没有配置 Token，跳过认证
+  if (!API_TOKEN) {
+    console.warn('[Backend] API_TOKEN not configured, authentication disabled');
+    return next();
+  }
+  
+  const authHeader = req.headers.authorization;
+  
+  if (!authHeader) {
+    return res.status(401).json({ error: 'Missing authorization header' });
+  }
+  
+  const token = authHeader.startsWith('Bearer ') 
+    ? authHeader.slice(7) 
+    : authHeader;
+  
+  if (token !== API_TOKEN) {
+    return res.status(401).json({ error: 'Invalid token' });
+  }
+  
+  next();
+}
+
 // 中间件
 app.use(cors());
 app.use(express.json());
+app.use(requireAuth);
 
 // API 路由
 app.use('/api', routes);
 
 // WebSocket 连接
 const clients = new Set<WebSocket>();
+const authenticatedClients = new Set<WebSocket>();
 
-wss.on('connection', (ws) => {
+wss.on('connection', (ws, req) => {
+  // WebSocket Token 认证
+  if (API_TOKEN) {
+    const url = new URL(req.url || '', `http://localhost:${PORT}`);
+    const token = url.searchParams.get('token');
+    
+    if (token !== API_TOKEN) {
+      console.warn('[WebSocket] Unauthorized connection attempt');
+      ws.close(1008, 'Unauthorized');
+      return;
+    }
+  }
+  
   console.log('[WebSocket] Client connected');
   clients.add(ws);
+  authenticatedClients.add(ws);
   
   ws.on('close', () => {
     console.log('[WebSocket] Client disconnected');
     clients.delete(ws);
+    authenticatedClients.delete(ws);
   });
   
   ws.on('error', (error) => {
     console.error('[WebSocket] Error:', error);
     clients.delete(ws);
+    authenticatedClients.delete(ws);
   });
 });
 
 // 广播消息
 export function broadcast(event: string, data: any) {
   const message = JSON.stringify({ event, data });
-  for (const client of clients) {
+  for (const client of authenticatedClients) {
     if (client.readyState === WebSocket.OPEN) {
       client.send(message);
     }

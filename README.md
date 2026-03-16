@@ -208,6 +208,35 @@ RestartSec=3
 
 **效果**：长时间故障时，一次性切换，避免每次请求都等待超时。
 
+## 安全配置
+
+### 生产环境必须配置
+
+```bash
+# 1. 生成 API Token
+openssl rand -hex 32
+
+# 2. 编辑 .env 文件
+API_TOKEN=your-generated-token
+
+# 3. 前端配置（.env）
+VITE_API_TOKEN=your-generated-token
+```
+
+### 推荐方案：SSH 隧道
+
+```bash
+# 在客户端机器执行
+ssh -L 3000:localhost:3000 user@服务器IP
+
+# 前端连接 localhost
+VITE_API_BASE=http://localhost:3000
+```
+
+详细配置请参考 [安全配置指南](docs/security.md)。
+
+---
+
 ## 故障处理流程
 
 ### 服务启动顺序

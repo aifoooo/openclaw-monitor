@@ -184,6 +184,53 @@ configure_openclaw() {
     echo -e "${GREEN}✓ OpenClaw 配置已更新${NC}"
 }
 
+# 生成安全配置
+generate_security_config() {
+    echo -e "${YELLOW}生成安全配置...${NC}"
+    
+    # 生成 API Token
+    local api_token=$(openssl rand -hex 32)
+    
+    # 创建 .env 文件
+    cat > "$INSTALL_DIR/.env" << EOF
+# OpenClaw Monitor 配置文件
+
+# 代理配置
+PROXY_PORT=38080
+TARGET_URL=https://api.lkeap.cloud.tencent.com/coding/v3
+LOG_DIR=$LOG_DIR
+LOG_ROTATION_DAYS=7
+
+# 重试配置
+MAX_RETRIES=3
+RETRY_DELAY=1000
+
+# 后端配置
+PORT=3000
+OPENCLAW_DIR=/root/.openclaw
+
+# 安全配置
+API_TOKEN=$api_token
+
+# HTTPS 配置（可选）
+HTTPS_ENABLED=false
+# HTTPS_KEY=/etc/openclaw-monitor/key.pem
+# HTTPS_CERT=/etc/openclaw-monitor/cert.pem
+EOF
+    
+    echo -e "${GREEN}✓ 安全配置已生成${NC}"
+    echo ""
+    echo "================================"
+    echo -e "${YELLOW}重要：请保存以下信息${NC}"
+    echo ""
+    echo "API Token: $api_token"
+    echo ""
+    echo "前端配置（.env）："
+    echo "  VITE_API_TOKEN=$api_token"
+    echo "================================"
+    echo ""
+}
+
 # 启动服务
 start_services() {
     echo -e "${YELLOW}启动服务...${NC}"
@@ -258,6 +305,7 @@ main() {
     build_project
     install_systemd_service
     install_healthcheck
+    generate_security_config
     configure_openclaw
     start_services
     show_status
