@@ -98,7 +98,26 @@ install_dependencies() {
 build_project() {
     echo -e "${YELLOW}构建项目...${NC}"
     cd "$INSTALL_DIR"
+    
+    # 构建代理
+    echo "构建代理..."
+    cd packages/proxy
     pnpm build
+    cd ../..
+    
+    # 构建后端
+    echo "构建后端..."
+    cd packages/backend
+    pnpm build
+    cd ../..
+    
+    # 构建前端
+    echo "构建前端..."
+    cd packages/client
+    pnpm install
+    pnpm build
+    cd ../..
+    
     echo -e "${GREEN}✓ 构建完成${NC}"
 }
 
