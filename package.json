@@ -1,19 +1,20 @@
 {
   "name": "openclaw-monitor",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
-  "description": "OpenClaw Monitor - 实时监控 OpenClaw 运行状态",
+  "description": "OpenClaw Monitor - 实时监控 OpenClaw 运行状态，基于 Cache Trace 分析",
   "scripts": {
-    "dev:proxy": "pnpm --filter @openclaw-monitor/proxy dev",
     "dev:backend": "pnpm --filter @openclaw-monitor/backend dev",
     "dev:client": "pnpm --filter @openclaw-monitor/client dev",
+    "dev": "concurrently \"pnpm dev:backend\" \"pnpm dev:client\"",
     "build": "pnpm -r build",
     "test": "pnpm -r test"
   },
-  "keywords": ["openclaw", "monitor", "llm"],
+  "keywords": ["openclaw", "monitor", "llm", "cache-trace"],
   "author": "aifoooo",
   "license": "MIT",
   "devDependencies": {
-    "typescript": "^5.3.3"
+    "typescript": "^5.3.3",
+    "concurrently": "^8.2.2"
   }
 }

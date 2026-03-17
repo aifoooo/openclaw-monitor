@@ -1,232 +1,186 @@
-# 安全配置指南
+# 安全设计
 
-本文档说明如何安全地使用 OpenClaw Monitor。
+## 威胁模型
 
-## 安全风险
+### 攻击面分析
 
-默认配置下，OpenClaw Monitor 存在以下安全风险：
+| 攻击面 | 风险等级 | 说明 |
+|--------|----------|------|
+| 文件读取 | 高 | 解析 Cache Trace 文件 |
+| SQL 注入 | 中 | SQLite 数据库操作 |
+| WebSocket | 低 | 本地服务，仅限本机访问 |
+| API 接口 | 低 | 本地服务，仅限本机访问 |
 
-| 风险 | 说明 | 默认值 |
-|------|------|--------|
-| HTTP 明文传输 | 数据可被窃听 | 使用 SSH 隧道解决 |
-| 无认证机制 | 任何人都可以访问 API | 已自动生成 Token |
-| CORS 全开放 | 任何网站都可以调用 API | 需手动限制 |
-| 日志记录敏感数据 | 可能泄露用户消息 | 默认不记录 |
+## 安全措施
 
----
+### 1. 文件路径验证
 
-## 安全配置清单
+**风险**：路径穿越攻击
 
-安装时会自动生成以下配置：
-
-```bash
-# API Token（必须）
-API_TOKEN=<自动生成>
-
-# 日志敏感数据（默认不记录）
-LOG_SENSITIVE_DATA=false
-
-# CORS 限制（生产环境必须配置）
-CORS_ORIGIN=http://localhost:5173,https://your-frontend.com
-
-# IP 白名单（可选）
-IP_WHITELIST=192.168.1.0/24,10.0.0.1
-
-# 速率限制（可选）
-RATE_LIMIT_WINDOW=60000  # 1 分钟
-RATE_LIMIT_MAX=100       # 每分钟最多 100 次请求
+**措施**：
+```typescript
+function validateFilePath(filePath: string): boolean {
+  const absolutePath = path.resolve(filePath);
+  
+  // 只允许访问特定目录
+  const allowedDirs = [
+    config.openclawDir,
+    path.join(process.env.HOME || '/root', '.openclaw/logs'),
+    '/tmp',
+  ];
+  
+  const isAllowed = allowedDirs.some(dir => 
+    absolutePath.startsWith(path.resolve(dir))
+  );
+  
+  if (!isAllowed) {
+    console.error(`[Security] Path traversal attempt: ${filePath}`);
+    return false;
+  }
+  
+  // 禁止路径穿越
+  if (filePath.includes('..') || filePath.includes('\0')) {
+    console.error(`[Security] Invalid path pattern: ${filePath}`);
+    return false;
+  }
+  
+  return true;
+}
 ```
 
----
+### 2. SQL 注入防护
 
-## 安全措施列表
+**风险**：恶意输入导致 SQL 注入
 
-| 措施 | 状态 | 说明 |
-|------|------|------|
-| Token 认证 | ✅ 必须 | API 和 WebSocket 都需要 |
-| CORS 限制 | ✅ 可配置 | 通过 `CORS_ORIGIN` 限制 |
-| 日志脱敏 | ✅ 默认开启 | 默认不记录敏感数据 |
-| 文件路径验证 | ✅ 已实现 | 防止路径遍历攻击 |
-| 速率限制 | ✅ 可配置 | 防止 DDoS 攻击 |
-| IP 白名单 | ✅ 可配置 | 限制访问 IP |
-| HTTPS 支持 | ✅ 可选 | 支持自签名证书 |
+**措施**：
+- 使用参数化查询
+- 使用 ORM 或查询构建器
+- 输入验证
 
----
+```typescript
+// 正确做法
+const stmt = db.prepare('SELECT * FROM runs WHERE run_id = ?');
+const run = stmt.get(runId);
 
-## 方案一：SSH 隧道（推荐）
-
-**适用场景**：客户端和服务端在不同机器上，没有域名。
-
-### 架构
-
-![SSH 隧道架构](images/ssh-tunnel.png){width=70%}
-
-### 使用方法
-
-**在客户端机器执行**：
-
-```bash
-# 基本用法
-ssh -L 3000:localhost:3000 user@服务器IP
-
-# 保持连接（推荐）
-ssh -L 3000:localhost:3000 -o ServerAliveInterval=60 user@服务器IP
-
-# 后台运行
-ssh -fNL 3000:localhost:3000 user@服务器IP
+// 错误做法（有 SQL 注入风险）
+const run = db.exec(`SELECT * FROM runs WHERE run_id = '${runId}'`);
 ```
 
-**参数说明**：
-- `-L 3000:localhost:3000`：将本地 3000 端口转发到服务端的 localhost:3000
-- `-o ServerAliveInterval=60`：每 60 秒发送心跳，保持连接
-- `-fN`：后台运行，不打开 shell
+### 3. WebSocket 安全
 
-### 前端配置
+**风险**：未授权访问
 
-SSH 隧道建立后，前端连接 localhost：
+**措施**：
+- 只监听 localhost
+- 可选：Token 认证
 
-```bash
-# .env
-VITE_API_BASE=http://localhost:3000
+```typescript
+// 只监听本地
+app.listen({ port: 3001, hostname: 'localhost' });
+
+// 可选：Token 认证
+app.use('*', async (c, next) => {
+  const token = c.req.header('Authorization');
+  if (token !== config.apiToken) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  await next();
+});
 ```
 
-### 优点
+### 4. 输入验证
 
-- ✅ 无需证书
-- ✅ 加密传输
-- ✅ 简单易用
-- ✅ SSH 自带认证
+**风险**：恶意输入导致异常
 
-### 缺点
+**措施**：
+- 验证所有外部输入
+- 限制输入长度
+- 类型检查
 
-- ⚠️ 需要保持 SSH 连接
-- ⚠️ 每个用户都需要配置
+```typescript
+import { z } from 'zod';
 
----
+const RunQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+  sessionKey: z.string().optional(),
+});
 
-## 方案二：自签名证书 + HTTPS
-
-**适用场景**：没有域名，但需要直接访问。
-
-### 生成自签名证书
-
-```bash
-# 在服务端执行
-openssl req -x509 -newkey rsa:4096 \
-  -keyout /etc/openclaw-monitor/key.pem \
-  -out /etc/openclaw-monitor/cert.pem \
-  -days 365 -nodes \
-  -subj "/CN=<服务器IP>"
+app.get('/api/runs', async (c) => {
+  const query = RunQuerySchema.parse(c.req.query());
+  // ...
+});
 ```
 
-### 配置后端使用 HTTPS
+### 5. 敏感数据处理
 
-编辑 `.env`：
+**风险**：敏感数据泄露
 
-```bash
-HTTPS_ENABLED=true
-HTTPS_KEY=/etc/openclaw-monitor/key.pem
-HTTPS_CERT=/etc/openclaw-monitor/cert.pem
+**措施**：
+- Cache Trace 可能包含敏感信息
+- 不记录 API Key
+- 不记录完整的 system prompt（可选）
+
+```typescript
+// 脱敏处理
+function sanitizeMessage(msg: CacheTraceMessage): CacheTraceMessage {
+  // 移除敏感信息
+  if (msg.content) {
+    msg.content = msg.content.map(c => {
+      if (c.type === 'text' && c.text?.includes('API Key')) {
+        c.text = c.text.replace(/sk-[a-zA-Z0-9]+/g, 'sk-***');
+      }
+      return c;
+    });
+  }
+  return msg;
+}
 ```
 
-### 前端配置
+### 6. 日志安全
 
-```bash
-# .env
-VITE_API_BASE=https://服务器IP:3000
+**风险**：日志中泄露敏感信息
+
+**措施**：
+- 不记录完整的请求/响应内容
+- 不记录 API Key
+- 限制日志级别
+
+```typescript
+// 正确做法
+console.log(`[Parser] Parsed ${entries.length} entries`);
+
+// 错误做法
+console.log(`[Parser] Entry: ${JSON.stringify(entry)}`);
 ```
 
-### 信任证书（客户端）
+## 安全检查清单
 
-**浏览器**：
-1. 访问 `https://服务器IP:3000/health`
-2. 点击 "高级" → "继续访问"
+- [ ] 文件路径验证
+- [ ] SQL 参数化查询
+- [ ] WebSocket 仅监听 localhost
+- [ ] 输入验证
+- [ ] 敏感数据脱敏
+- [ ] 日志安全
+- [ ] 错误处理不泄露内部信息
 
-**系统级信任**：
-```bash
-# Linux
-sudo cp cert.pem /usr/local/share/ca-certificates/openclaw-monitor.crt
-sudo update-ca-certificates
+## 审计日志
 
-# macOS
-sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain cert.pem
+记录关键操作：
 
-# Windows
-certutil -addstore "Root" cert.pem
+```typescript
+interface AuditLog {
+  timestamp: number;
+  action: 'file_read' | 'db_write' | 'ws_push' | 'api_call';
+  user?: string;
+  resource: string;
+  result: 'success' | 'failure';
+  error?: string;
+}
 ```
 
-### 优点
+## 更新策略
 
-- ✅ 加密传输
-- ✅ 不需要域名
-- ✅ 直接访问
-
-### 缺点
-
-- ⚠️ 浏览器警告
-- ⚠️ 需要手动信任证书
-
----
-
-## 方案三：Token 认证（必须实现）
-
-无论使用哪种传输方案，都应该启用 Token 认证。
-
-### 配置
-
-编辑 `.env`：
-
-```bash
-# 生成随机 Token
-API_TOKEN=$(openssl rand -hex 32)
-```
-
-### 前端配置
-
-```bash
-# .env
-VITE_API_TOKEN=your-token-here
-```
-
-### 使用
-
-所有 API 请求需要携带 Token：
-
-```bash
-curl -H "Authorization: Bearer your-token-here" http://localhost:3000/api/channels
-```
-
----
-
-## 方案对比
-
-| 方案 | 加密 | 认证 | 复杂度 | 适用场景 |
-|------|------|------|--------|----------|
-| SSH 隧道 | ✅ | ✅ | 低 | 个人使用 |
-| 自签名证书 | ✅ | ❌ | 中 | 内网使用 |
-| Token 认证 | ❌ | ✅ | 低 | 必须启用 |
-
----
-
-## 推荐配置
-
-**生产环境**：
-
-```
-SSH 隧道 + Token 认证
-```
-
-**内网环境**：
-
-```
-自签名证书 + Token 认证
-```
-
----
-
-## 检查清单
-
-- [ ] 已配置 Token 认证
-- [ ] 已配置 SSH 隧道或 HTTPS
-- [ ] 已限制 CORS（生产环境）
-- [ ] 已修改默认端口（可选）
+- 定期检查依赖漏洞：`npm audit`
+- 及时更新依赖版本
+- 关注安全公告

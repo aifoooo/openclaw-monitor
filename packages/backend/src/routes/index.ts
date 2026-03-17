@@ -1,136 +1,130 @@
-import express from 'express';
-import cors from 'cors';
-import type { Chat, Message } from '../types';
-import { parseAllSessions, parseSessionMessages } from '../parser';
-import { enrichWithProxyLog } from '../parser/proxy-log';
+import { Hono } from 'hono';
+import { cors } from 'hono/cors';
+import { createNodeWebSocket } from '@hono/node-ws';
+import * as db from '../db';
+import * as ws from '../ws';
+import { getRecentRuns, getRunById, getRunMessages, parseAllSessions } from '../parser';
 
-const router = express.Router();
-
-// 缓存
-let chatsCache: Chat[] = [];
-let lastCacheUpdate = 0;
-const CACHE_TTL = parseInt(process.env.CACHE_TTL || '30000'); // 默认 30 秒缓存
-
-// 更新缓存
-async function updateCache() {
-  const now = Date.now();
-  if (now - lastCacheUpdate > CACHE_TTL) {
-    chatsCache = await parseAllSessions();
-    lastCacheUpdate = now;
-  }
+export function createApp() {
+  const app = new Hono();
+  
+  // CORS
+  app.use('*', cors());
+  
+  // WebSocket
+  const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
+  
+  // 健康检查
+  app.get('/health', (c) => {
+    return c.json({ 
+      status: 'ok', 
+      timestamp: Date.now(),
+      connections: ws.getConnectionCount(),
+    });
+  });
+  
+  // API 路由
+  const api = new Hono();
+  
+  // 获取 Run 列表
+  api.get('/runs', async (c) => {
+    const limit = parseInt(c.req.query('limit') || '50');
+    const offset = parseInt(c.req.query('offset') || '0');
+    const sessionKey = c.req.query('sessionKey');
+    
+    try {
+      // 先从内存/Cache Trace 解析获取最新数据
+      const recentRuns = await getRecentRuns(100);
+      
+      // 再从数据库获取历史数据
+      const dbRuns = db.getRuns({ limit, offset, sessionKey });
+      
+      // 合并去重
+      const runMap = new Map<string, typeof recentRuns[0]>();
+      
+      for (const run of recentRuns) {
+        runMap.set(run.id, run);
+      }
+      
+      for (const run of dbRuns) {
+        if (!runMap.has(run.id)) {
+          runMap.set(run.id, run);
+        }
+      }
+      
+      const allRuns = Array.from(runMap.values())
+        .sort((a, b) => b.startedAt - a.startedAt)
+        .slice(offset, offset + limit);
+      
+      return c.json({
+        runs: allRuns,
+        total: runMap.size,
+        limit,
+        offset,
+      });
+    } catch (e) {
+      console.error('[API] Error getting runs:', e);
+      return c.json({ error: 'Failed to get runs' }, 500);
+    }
+  });
+  
+  // 获取 Run 详情
+  api.get('/runs/:runId', async (c) => {
+    const runId = c.req.param('runId');
+    
+    try {
+      const run = await getRunById(runId) || db.getRunById(runId);
+      
+      if (!run) {
+        return c.json({ error: 'Run not found' }, 404);
+      }
+      
+      return c.json(run);
+    } catch (e) {
+      console.error('[API] Error getting run:', e);
+      return c.json({ error: 'Failed to get run' }, 500);
+    }
+  });
+  
+  // 获取 Run 消息
+  api.get('/runs/:runId/messages', async (c) => {
+    const runId = c.req.param('runId');
+    
+    try {
+      const messages = await getRunMessages(runId);
+      
+      return c.json({
+        messages,
+        total: messages.length,
+      });
+    } catch (e) {
+      console.error('[API] Error getting messages:', e);
+      return c.json({ error: 'Failed to get messages' }, 500);
+    }
+  });
+  
+  // 获取 Session 列表
+  api.get('/sessions', async (c) => {
+    try {
+      const sessions = await parseAllSessions();
+      
+      return c.json({
+        sessions,
+        total: sessions.length,
+      });
+    } catch (e) {
+      console.error('[API] Error getting sessions:', e);
+      return c.json({ error: 'Failed to get sessions' }, 500);
+    }
+  });
+  
+  // 挂载 API
+  app.route('/api', api);
+  
+  // WebSocket 路由
+  app.get('/ws', upgradeWebSocket(() => ws.createWSHandler()));
+  
+  return { app, injectWebSocket };
 }
 
-// 获取渠道列表
-router.get('/channels', async (req, res) => {
-  try {
-    await updateCache();
-    
-    // 从聊天列表提取渠道
-    const channelMap = new Map<string, { id: string; name: string; type: string }>();
-    
-    for (const chat of chatsCache) {
-      if (!channelMap.has(chat.channelId)) {
-        channelMap.set(chat.channelId, {
-          id: chat.channelId,
-          name: chat.channelId, // 可以从配置读取更友好的名称
-          type: chat.channelId.includes('qq') ? 'qqbot' : 'unknown',
-        });
-      }
-    }
-    
-    const channels = Array.from(channelMap.values()).map(ch => ({
-      ...ch,
-      status: 'online' as const,
-    }));
-    
-    res.json({ channels });
-  } catch (error) {
-    console.error('Failed to get channels:', error);
-    res.status(500).json({ error: 'Failed to get channels' });
-  }
-});
-
-// 获取聊天列表
-router.get('/chats', async (req, res) => {
-  try {
-    const { channel, limit = 50, offset = 0 } = req.query;
-    
-    await updateCache();
-    
-    let filtered = chatsCache;
-    if (channel) {
-      filtered = chatsCache.filter(c => c.channelId === channel);
-    }
-    
-    const total = filtered.length;
-    const chats = filtered.slice(Number(offset), Number(offset) + Number(limit));
-    
-    res.json({ chats, total });
-  } catch (error) {
-    console.error('Failed to get chats:', error);
-    res.status(500).json({ error: 'Failed to get chats' });
-  }
-});
-
-// 获取消息列表
-router.get('/messages', async (req, res) => {
-  try {
-    const { chat: chatId, limit = 100 } = req.query;
-    
-    if (!chatId) {
-      return res.status(400).json({ error: 'Missing chat parameter' });
-    }
-    
-    // 找到对应的 session 文件
-    const chat = chatsCache.find(c => c.id === chatId);
-    if (!chat) {
-      return res.status(404).json({ error: 'Chat not found' });
-    }
-    
-    const messages = await parseSessionMessages(chat.sessionFile);
-    
-    // 合并代理日志（异步）
-    const enrichedMessages = await Promise.all(
-      messages.map(msg => enrichWithProxyLog(msg))
-    );
-    
-    res.json({ messages: enrichedMessages.slice(0, Number(limit)) });
-  } catch (error) {
-    console.error('Failed to get messages:', error);
-    res.status(500).json({ error: 'Failed to get messages' });
-  }
-});
-
-// 获取操作详情
-router.get('/operations', async (req, res) => {
-  try {
-    const { message: messageId } = req.query;
-    
-    if (!messageId) {
-      return res.status(400).json({ error: 'Missing message parameter' });
-    }
-    
-    // 从消息 ID 提取 chatId 和 index
-    // messageId 格式: msg-{index}
-    // 需要从缓存中找到对应的消息
-    
-    // 简化实现：遍历所有聊天找到对应消息
-    await updateCache();
-    
-    for (const chat of chatsCache) {
-      const messages = await parseSessionMessages(chat.sessionFile);
-      const msg = messages.find(m => m.id === messageId);
-      
-      if (msg && msg.operations) {
-        return res.json({ operations: msg.operations });
-      }
-    }
-    
-    res.json({ operations: [] });
-  } catch (error) {
-    console.error('Failed to get operations:', error);
-    res.status(500).json({ error: 'Failed to get operations' });
-  }
-});
-
-export default router;
+export type AppType = ReturnType<typeof createApp>['app'];

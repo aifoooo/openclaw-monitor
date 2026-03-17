@@ -1,341 +1,182 @@
 # OpenClaw Monitor
 
-实时监控 OpenClaw 运行状态，追踪每次请求的操作细节。
+实时监控 OpenClaw 运行状态，追踪每次 LLM 调用的输入输出。
 
 ## 背景
 
 向 OpenClaw 发送消息后，响应缓慢或无响应的情况时有发生。
 
 **核心痛点**：
+- 不知道龙虾在干嘛
 - 任务执行状态不透明
 - 无法定位性能瓶颈
 - 难以追踪故障环节
-- 缺乏优化依据
 
-本项目通过 **实时解析 OpenClaw 配置和日志文件**，追踪每次请求的操作细节。同时通过 HTTP 代理拦截 LLM 请求，获取完整的输入输出。
-
-**附加收益**：
-- 本地缓存降低网络延迟
-- 增量更新减少数据同步开销
-- 完整的 LLM 调试日志
+本项目通过 **解析 OpenClaw Cache Trace 日志**，追踪每次 LLM 调用的完整输入输出。
 
 ## 功能特性
 
-### 核心功能
-
 | 功能 | 说明 |
 |------|------|
-| 📋 渠道管理 | 查看已配置的渠道列表，切换当前渠道 |
-| 💬 聊天列表 | 查看当前渠道下的所有聊天 |
-| 📝 消息详情 | 查看用户发送的消息和助手回复 |
-| 🔍 操作追踪 | 追踪每次请求触发的所有操作（命令执行、LLM 调用、API 调用） |
-| 📊 性能分析 | 显示每个操作的耗时 |
-| 💰 Token 统计 | 显示 Token 用量统计 |
+| 📊 Run 列表 | 查看最近的 LLM 调用列表 |
+| 🔍 输入追踪 | 查看发送给模型的完整 messages |
+| 📤 输出追踪 | 查看模型返回的完整响应 |
+| 📈 性能分析 | 显示每次调用的耗时 |
 | 🔄 实时更新 | 文件变更自动推送，无需手动刷新 |
-
-### 特色功能
-
-- **LLM 输入输出捕获**：通过 HTTP 代理拦截，记录完整的 prompt 和响应
-- **流式响应支持**：正确处理 LLM 的流式输出
-- **离线查看**：本地缓存历史数据，断网也能查看
-- **自动故障切换**：代理不可用时自动切换到直连
+| 💾 持久化存储 | SQLite 存储，支持历史查询 |
 
 ## 技术架构
 
-![技术架构](docs/images/architecture.png){width=70%}
+```
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│   OpenClaw      │────▶│  Cache Trace    │────▶│   Backend       │
+│   (LLM Agent)   │     │  (JSONL File)   │     │   (Parser)      │
+└─────────────────┘     └─────────────────┘     └────────┬────────┘
+                                                         │
+                        ┌────────────────────────────────┘
+                        │
+                        ▼
+               ┌─────────────────┐     ┌─────────────────┐
+               │     SQLite      │◀────│    WebSocket    │
+               │   (Persistence) │     │    (Push)       │
+               └─────────────────┘     └────────┬────────┘
+                                                │
+                        ┌───────────────────────┘
+                        │
+                        ▼
+               ┌─────────────────┐
+               │     Frontend    │
+               │   (Vue 3 + TS)  │
+               └─────────────────┘
+```
+
+## 数据流
+
+```
+1. OpenClaw 调用 LLM
+      │
+      ▼
+2. Cache Trace 记录 stream:context（输入）
+      │
+      ▼
+3. LLM 返回响应
+      │
+      ▼
+4. Cache Trace 记录 session:after（输出）
+      │
+      ▼
+5. Backend 监听文件变更，解析新条目
+      │
+      ▼
+6. 存储到 SQLite，推送 WebSocket 消息
+      │
+      ▼
+7. Frontend 实时显示
+```
 
 ## 快速开始
 
-### 一键安装
+### 前置条件
+
+1. **OpenClaw 已配置 Cache Trace**
+
+确保 `~/.openclaw/openclaw.json` 中启用了 Cache Trace：
+
+```json
+{
+  "diagnostics": {
+    "enabled": true,
+    "cacheTrace": {
+      "enabled": true,
+      "includeMessages": true,
+      "includePrompt": true,
+      "includeSystem": true
+    }
+  }
+}
+```
+
+2. **Node.js 18+**
+
+### 安装
 
 ```bash
 # 克隆项目
 git clone https://github.com/aifoooo/openclaw-monitor.git
 cd openclaw-monitor
 
-# 运行安装脚本（使用默认配置）
-sudo ./scripts/install.sh
-
-# 或自定义安装路径
-sudo ./scripts/install.sh --dir /opt/openclaw-monitor --log-dir /var/log/openclaw-monitor
-```
-
-### 配置文件
-
-<details>
-<summary>点击展开配置说明</summary>
-
-复制配置文件模板：
-
-```bash
-cp .env.example .env
-```
-
-编辑 `.env` 文件修改配置：
-
-```bash
-# 代理配置
-PROXY_PORT=38080
-TARGET_URL=https://api.lkeap.cloud.tencent.com/coding/v3
-LOG_DIR=/var/log/openclaw-monitor
-LOG_ROTATION_DAYS=7
-
-# 后端配置
-BACKEND_PORT=3000
-OPENCLAW_DIR=/root/.openclaw
-```
-
-</details>
-
-安装脚本会自动：
-1. ✅ 检查依赖
-2. ✅ 安装项目依赖
-3. ✅ 构建项目
-4. ✅ 安装 systemd 服务
-5. ✅ 安装健康检查脚本
-6. ✅ 配置 OpenClaw
-7. ✅ 启动服务
-
-### 卸载
-
-```bash
-sudo ./scripts/uninstall.sh
-```
-
-### 手动安装
-
-<details>
-<summary>点击展开手动安装步骤</summary>
-
-#### 前置要求
-
-- Node.js >= 18
-- pnpm >= 8
-
-#### 步骤
-
-```bash
-# 1. 安装依赖
+# 安装依赖
 pnpm install
 
-# 2. 构建
+# 构建
 pnpm build
 
-# 3. 创建日志目录
-mkdir -p /var/log/openclaw-monitor
-
-# 4. 安装 systemd 服务
-sudo cp scripts/openclaw-proxy.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable openclaw-proxy
-sudo systemctl start openclaw-proxy
-
-# 5. 安装健康检查脚本
-sudo cp scripts/proxy-healthcheck.sh /usr/local/bin/
-sudo chmod +x /usr/local/bin/proxy-healthcheck.sh
-
-# 6. 添加 cron 任务（每分钟检查）
-(crontab -l 2>/dev/null | grep -v "proxy-healthcheck"; echo "* * * * * /usr/local/bin/proxy-healthcheck.sh") | crontab -
-
-# 7. 修改 OpenClaw 配置
-jq '.models.providers.tencentcodingplan.baseUrl = "http://localhost:38080/v3"' \
-    /root/.openclaw/openclaw.json > /tmp/openclaw.json.tmp && \
-    mv /tmp/openclaw.json.tmp /root/.openclaw/openclaw.json
-
-# 8. 重启 OpenClaw Gateway
-systemctl restart openclaw-gateway
+# 启动
+pnpm dev
 ```
 
-</details>
+### 配置
 
-## 推荐配置
+环境变量：
 
-### 1. 模型降级链
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `OPENCLAW_DIR` | `/root/.openclaw` | OpenClaw 配置目录 |
+| `CACHE_TRACE_PATH` | `~/.openclaw/logs/cache-trace.jsonl` | Cache Trace 文件路径 |
+| `DB_PATH` | `/var/lib/openclaw-monitor/monitor.db` | SQLite 数据库路径 |
+| `PORT` | `3000` | 后端 API 端口 |
+| `WS_PORT` | `3001` | WebSocket 端口 |
 
-即使有代理，也建议配置降级链作为兜底：
+## API 接口
 
-```json
-{
-  "agents": {
-    "defaults": {
-      "model": {
-        "primary": "tencentcodingplan/glm-5",
-        "fallbacks": [
-          "tencentcodingplan/hunyuan-2.0-thinking",
-          "deepseek/deepseek-reasoner"
-        ]
-      }
-    }
-  }
-}
-```
+| 接口 | 方法 | 说明 |
+|------|------|------|
+| `/api/runs` | GET | 获取最近的 Run 列表 |
+| `/api/runs/:runId` | GET | 获取 Run 详情 |
+| `/api/runs/:runId/messages` | GET | 获取 Run 的消息列表 |
+| `/api/sessions` | GET | 获取 Session 列表 |
+| `/api/sessions/:sessionId` | GET | 获取 Session 详情 |
 
-**效果**：代理不可用时，自动降级到其他模型。
+## WebSocket 消息
 
-### 2. systemd 自动重启
+| 类型 | 说明 |
+|------|------|
+| `run:started` | 新 Run 开始 |
+| `run:completed` | Run 完成 |
+| `run:updated` | Run 更新 |
 
-代理服务已配置自动重启：
-
-```ini
-[Service]
-Restart=always
-RestartSec=3
-```
-
-**效果**：代理崩溃后 3 秒内自动恢复。
-
-### 3. 健康检查脚本
-
-每分钟检测代理状态，自动切换配置：
-
-- 代理可用 → 使用代理（记录完整请求/响应）
-- 代理不可用 → 切换到直连（保证服务可用）
-
-**效果**：长时间故障时，一次性切换，避免每次请求都等待超时。
-
-## 安全配置
-
-<details>
-<summary>点击展开安全配置（生产环境必看）</summary>
-
-### 生产环境必须配置
+## 开发
 
 ```bash
-# 1. 生成 API Token
-openssl rand -hex 32
+# 开发模式
+pnpm dev
 
-# 2. 编辑 .env 文件
-API_TOKEN=your-generated-token
+# 构建
+pnpm build
 
-# 3. 前端配置（.env）
-VITE_API_TOKEN=your-generated-token
+# 测试
+pnpm test
 ```
 
-### 推荐方案：SSH 隧道
-
-```bash
-# 在客户端机器执行
-ssh -L 3000:localhost:3000 user@服务器IP
-
-# 前端连接 localhost
-VITE_API_BASE=http://localhost:3000
-```
-
-详细配置请参考 [安全配置指南](docs/security.md)。
-
-</details>
-
----
-
-## 故障处理流程
-
-### 代理崩溃时
-
-```
-代理崩溃
-    ↓
-systemd 3秒内自动重启
-    ↓
-重启期间请求失败
-    ↓
-模型降级链自动降级到 DeepSeek
-    ↓
-代理恢复后自动切回
-```
-
-### 代理长时间无法恢复时
-
-```
-健康检查脚本检测到代理不可用
-    ↓
-自动修改配置，切换到直连
-    ↓
-重启 Gateway（一次性中断）
-    ↓
-之后所有请求都走直连，无额外延迟
-```
-
-### 手动启停
-
-```bash
-# 按顺序启动
-systemctl start openclaw-proxy
-systemctl start openclaw-backend
-systemctl start openclaw-gateway
-
-# 按相反顺序停止
-systemctl stop openclaw-gateway
-systemctl stop openclaw-backend
-systemctl stop openclaw-proxy
-```
-
-## 项目结构
+## 目录结构
 
 ```
 openclaw-monitor/
 ├── packages/
-│   ├── proxy/            # HTTP 代理
-│   │   └── src/
-│   │       └── index.ts  # 代理服务
 │   ├── backend/          # 后端服务
 │   │   └── src/
-│   │       ├── parser/   # session 文件解析
-│   │       ├── routes/   # REST API
-│   │       └── watcher/  # 文件监听
-│   └── client/           # 前端客户端
+│   │       ├── parser/   # Cache Trace 解析
+│   │       ├── routes/   # API 路由
+│   │       ├── watcher/  # 文件监听
+│   │       └── index.ts
+│   └── client/           # 前端应用
 │       └── src/
-│           ├── components/  # Vue 组件
-│           ├── router/      # 路由配置
-│           └── services/    # API 服务
-├── scripts/
-│   ├── install.sh              # 一键安装脚本
-│   ├── openclaw-proxy.service  # systemd 服务文件
-│   └── proxy-healthcheck.sh    # 健康检查脚本
-├── docs/
-│   └── architecture.md   # 详细架构设计
-├── package.json
-└── pnpm-workspace.yaml
-```
-
-## API 文档
-
-### REST API
-
-| 端点 | 说明 |
-|------|------|
-| `GET /api/channels` | 获取渠道列表 |
-| `GET /api/chats?channel=xxx` | 获取聊天列表 |
-| `GET /api/messages?chat=xxx` | 获取消息列表 |
-| `GET /api/operations?message=xxx` | 获取操作详情 |
-
-### WebSocket
-
-```
-ws://localhost:3000/ws
-```
-
-事件：
-- `session:update` - session 文件更新
-- `llm:request` - LLM 请求拦截
-- `llm:response` - LLM 响应拦截
-
-## 常用命令
-
-```bash
-# 查看代理状态
-systemctl status openclaw-proxy
-
-# 查看代理日志
-journalctl -u openclaw-proxy -f
-
-# 重启代理
-systemctl restart openclaw-proxy
-
-# 查看健康检查日志
-tail -f /var/log/openclaw-monitor/proxy-healthcheck.log
-
-# 查看 LLM 请求日志
-tail -f /var/log/openclaw-monitor/llm-$(date +%Y-%m-%d).jsonl
+│           ├── components/
+│           ├── views/
+│           └── services/
+├── docs/                 # 文档
+├── scripts/              # 脚本
+└── tests/                # 测试
 ```
 
 ## 许可证
