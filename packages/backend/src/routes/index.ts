@@ -235,13 +235,14 @@ export function createApp() {
   
   // ✅ 前端界面路由
   app.get('/', async (c) => {
-    const frontendPath = path.join(__dirname, '../../frontend/index.html');
+    // __dirname 在编译后是 dist/routes，需要向上三级到 packages/frontend
+    const frontendPath = path.join(__dirname, '../../../frontend/index.html');
     try {
       const fs = await import('fs/promises');
       const html = await fs.readFile(frontendPath, 'utf-8');
       return c.html(html);
     } catch (e) {
-      return c.text('Frontend not found. Please build frontend first.', 404);
+      return c.text('Frontend not found. Please ensure frontend/index.html exists.', 404);
     }
   });
   

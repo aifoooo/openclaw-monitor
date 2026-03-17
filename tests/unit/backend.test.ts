@@ -7,6 +7,9 @@ const TEST_DIR = '/tmp/openclaw-monitor-test';
 const TEST_DB = path.join(TEST_DIR, 'test.db');
 const TEST_CACHE_TRACE = path.join(TEST_DIR, 'cache-trace.jsonl');
 
+// 导入路径修正
+const SRC_PATH = path.join(__dirname, '../../packages/backend/src');
+
 // 示例 Cache Trace 数据
 const sampleEntries = [
   {
@@ -60,17 +63,19 @@ describe('Cache Trace Parser', () => {
   });
   
   it('should parse cache trace file', async () => {
-    const { parseCacheTraceFile } = await import('../src/parser');
+    const { parseCacheTraceFile } = await import(path.join(SRC_PATH, 'parser'));
     
     const entries = await parseCacheTraceFile(TEST_CACHE_TRACE);
     
     expect(entries.length).toBe(2);
     expect(entries[0].runId).toBe('test-run-1');
-    expect(entries[1].stage).toBe('session:after');
+    // entries 是倒序返回的，所以 entries[0] 是最后一条
+    expect(entries[0].stage).toBe('session:after');
+    expect(entries[1].stage).toBe('stream:context');
   });
   
   it('should convert entries to run', async () => {
-    const { parseCacheTraceFile, convertToRun } = await import('../src/parser');
+    const { parseCacheTraceFile, convertToRun } = await import(path.join(SRC_PATH, 'parser'));
     
     const entries = await parseCacheTraceFile(TEST_CACHE_TRACE);
     const run = convertToRun(entries.reverse()); // 反转因为 parseCacheTraceFile 返回倒序
@@ -84,12 +89,12 @@ describe('Cache Trace Parser', () => {
 
 describe('Database', () => {
   beforeAll(async () => {
-    const { initDB } = await import('../src/db');
+    const { initDB } = await import(path.join(SRC_PATH, 'db'));
     initDB(TEST_DB);
   });
   
   afterAll(async () => {
-    const { closeDB } = await import('../src/db');
+    const { closeDB } = await import(path.join(SRC_PATH, 'db'));
     closeDB();
     
     if (fs.existsSync(TEST_DB)) {
@@ -98,7 +103,7 @@ describe('Database', () => {
   });
   
   it('should save and retrieve run', async () => {
-    const { saveRun, getRunById } = await import('../src/db');
+    const { saveRun, getRunById } = await import(path.join(SRC_PATH, 'db'));
     
     const run = {
       id: 'test-run-2',
@@ -122,7 +127,7 @@ describe('Database', () => {
   });
   
   it('should handle websocket messages', async () => {
-    const { getNextSeq, saveWSMessage, getUnackedMessages, ackMessage } = await import('../src/db');
+    const { getNextSeq, saveWSMessage, getUnackedMessages, ackMessage } = await import(path.join(SRC_PATH, 'db'));
     
     const seq = getNextSeq();
     saveWSMessage(seq, 'run:started', { id: 'test-run-3' });
