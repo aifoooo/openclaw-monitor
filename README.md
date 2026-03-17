@@ -65,11 +65,12 @@ Chat (聊天)
     ▼
 Message (消息)
 ├── id: string              # 消息 ID
-├── chatId: string          # 所属聊天
-├── role: string            # 角色：user, assistant, tool
-├── content: string         # 消息内容
+├── runId: string           # 关联的 Run ID
+├── role: string            # 角色：user, assistant, toolResult
+├── content: Content[]      # 消息内容（支持多类型）
 ├── timestamp: number       # 时间戳
-└── runId: string           # 关联的 Run ID
+├── usage?: Usage           # Token 使用量
+└── stopReason?: string     # 停止原因
     │
     │ 1:N
     ▼
@@ -289,23 +290,24 @@ Run (一次请求)
 |------|------|------|
 | `/api/channels` | GET | 获取渠道列表 |
 | `/api/channels/:channelId` | GET | 获取渠道详情 |
+| `/api/channels/refresh` | POST | 刷新渠道信息 |
 
 ### 聊天管理
 
 | 接口 | 方法 | 说明 |
 |------|------|------|
-| `/api/chats` | GET | 获取聊天列表 |
+| `/api/chats` | GET | 获取聊天列表（支持 channelId 过滤） |
 | `/api/chats/:chatId` | GET | 获取聊天详情 |
 | `/api/chats/:chatId/messages` | GET | 获取聊天消息 |
+| `/api/chats/scan` | POST | 扫描聊天 |
 
 ### Run 管理
 
 | 接口 | 方法 | 说明 |
 |------|------|------|
-| `/api/runs` | GET | 获取 Run 列表 |
+| `/api/runs` | GET | 获取 Run 列表（支持分页、排序） |
 | `/api/runs/:runId` | GET | 获取 Run 详情 |
 | `/api/runs/:runId/operations` | GET | 获取 Run 操作列表 |
-| `/api/runs/:runId/messages` | GET | 获取 Run 消息列表 |
 
 ### 系统接口
 
@@ -313,6 +315,7 @@ Run (一次请求)
 |------|------|------|
 | `/health` | GET | 健康检查 |
 | `/api/docs` | GET | API 文档 |
+| `/api/stats` | GET | 统计信息 |
 | `/api/watcher/status` | GET | Watcher 状态 |
 
 ---
@@ -384,28 +387,72 @@ pnpm dev
 
 ### ✅ 已完成
 
-- [x] Cache Trace 解析
-- [x] Run 基本模型
-- [x] REST API
+#### 核心功能
+- [x] Cache Trace 解析（LLM 输入输出）
+- [x] Gateway 日志解析（工具执行追踪）
+- [x] 数据合并（Cache Trace + Gateway 日志）
+- [x] 渠道管理功能
+- [x] 聊天列表功能
+- [x] 消息详情功能
+- [x] 操作追踪时间线
+
+#### 基础设施
+- [x] REST API（Hono）
 - [x] WebSocket 实时推送
-- [x] 基础前端界面
-- [x] 安全加固（认证、速率限制）
+- [x] SQLite 持久化存储
+- [x] 安全加固（认证、速率限制、CORS）
+- [x] 前端界面
+
+#### 测试与文档
+- [x] 单元测试（11个用例，100%通过）
+- [x] 集成测试
+- [x] 可靠性审查（4轮）
+- [x] 性能审查（4轮）
+- [x] 安全性审查（4轮）
+- [x] 易用性审查（4轮）
 
 ### 🚧 进行中
 
-- [ ] Gateway 日志解析（工具执行追踪）
-- [ ] 数据合并（Cache Trace + Gateway 日志）
+- [ ] 性能分析图表优化
+- [ ] 前端动态渲染转义完善
 
 ### 📋 待开发
 
-- [ ] 渠道管理功能
-- [ ] 聊天列表功能
-- [ ] 消息详情功能
-- [ ] 操作追踪时间线
-- [ ] 性能分析图表
+- [ ] Token 使用量图表
+- [ ] 成本统计图表
+- [ ] 导出报告功能
 
 ---
 
-## 许可证
+## 测试
 
-MIT
+### 测试覆盖
+
+| 模块 | 测试项 | 状态 |
+|------|--------|------|
+| Parser | Cache Trace 解析 | ✅ |
+| Parser | Run 转换 | ✅ |
+| Database | Run CRUD | ✅ |
+| Database | WebSocket 消息管理 | ✅ |
+| Database Extended | Channel/Chat/Operation CRUD | ✅ |
+| Channel | 配置解析 | ✅ |
+| Gateway Log | 日志解析 + 操作提取 | ✅ |
+
+### 运行测试
+
+```bash
+# 运行所有测试
+pnpm test
+
+# 运行特定测试
+pnpm test backend.test.ts
+```
+
+### 测试结果
+
+- **测试文件**: 2 个
+- **测试用例**: 11 个
+- **通过率**: 100%
+- **执行时间**: ~722ms
+
+详细报告: [测试报告](docs/test-report-final.md)
