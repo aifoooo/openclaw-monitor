@@ -5,6 +5,17 @@ import type { Run, DBCacheTrace, DBRun, MonitorConfig } from '../types';
 
 let db: Database.Database | null = null;
 
+// 安全的 JSON 解析
+function safeJSONParse<T>(text: string | null, fallback: T): T {
+  if (!text) return fallback;
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    console.error('[DB] JSON parse error:', e);
+    return fallback;
+  }
+}
+
 // 初始化数据库
 export function initDB(dbPath: string): Database.Database {
   // 确保目录存在
@@ -205,10 +216,10 @@ export function getRuns(options: {
     startedAt: row.started_at,
     completedAt: row.completed_at || undefined,
     status: row.status as 'running' | 'completed' | 'failed',
-    inputMessages: row.input_messages ? JSON.parse(row.input_messages) : undefined,
-    outputMessages: row.output_messages ? JSON.parse(row.output_messages) : undefined,
+    inputMessages: safeJSONParse(row.input_messages, undefined),
+    outputMessages: safeJSONParse(row.output_messages, undefined),
     messageCount: row.message_count,
-    stages: JSON.parse(row.stages),
+    stages: safeJSONParse(row.stages, []),
     error: row.error || undefined,
   }));
 }
@@ -229,10 +240,10 @@ export function getRunById(runId: string): Run | null {
     startedAt: row.started_at,
     completedAt: row.completed_at || undefined,
     status: row.status as 'running' | 'completed' | 'failed',
-    inputMessages: row.input_messages ? JSON.parse(row.input_messages) : undefined,
-    outputMessages: row.output_messages ? JSON.parse(row.output_messages) : undefined,
+    inputMessages: safeJSONParse(row.input_messages, undefined),
+    outputMessages: safeJSONParse(row.output_messages, undefined),
     messageCount: row.message_count,
-    stages: JSON.parse(row.stages),
+    stages: safeJSONParse(row.stages, []),
     error: row.error || undefined,
   };
 }
@@ -273,7 +284,7 @@ export function getUnackedMessages(sinceSeq?: number): Array<{ seq: number; type
   return rows.map(row => ({
     seq: row.seq,
     type: row.type,
-    data: JSON.parse(row.data),
+    data: safeJSONParse(row.data, {}),
   }));
 }
 
@@ -323,4 +334,97 @@ export function setFilePosition(filePath: string, position: number): void {
       updated_at = excluded.updated_at
   `);
   stmt.run(filePath, position, Date.now());
+}
+
+// ==================== 事务和批量操作 ====================
+
+/**
+ * 在事务中执行操作
+ */
+export function transaction<T>(fn: () => T): T {
+  return getDB().transaction(fn)();
+}
+
+/**
+ * 批量保存 Cache Trace（事务）
+ */
+export function saveCacheTracesBatch(entries: DBCacheTrace[]): void {
+  const stmt = getDB().prepare(`
+    INSERT INTO cache_traces (
+      run_id, session_id, session_key, provider, model_id,
+      stage, seq, timestamp, raw, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  
+  const insertMany = getDB().transaction(() => {
+    for (const entry of entries) {
+      stmt.run(
+        entry.runId,
+        entry.sessionId,
+        entry.sessionKey,
+        entry.provider,
+        entry.modelId,
+        entry.stage,
+        entry.seq,
+        entry.timestamp,
+        entry.raw,
+        entry.createdAt
+      );
+    }
+  });
+  
+  insertMany();
+}
+
+/**
+ * 原子获取下一个序列号
+ */
+export function getNextSeqAtomic(): number {
+  const db = getDB();
+  
+  // 使用事务确保原子性
+  const getNext = db.transaction(() => {
+    const stmt = db.prepare('SELECT MAX(seq) as max_seq FROM ws_messages');
+    const row = stmt.get() as { max_seq: number | null };
+    const nextSeq = (row.max_seq || 0) + 1;
+    return nextSeq;
+  });
+  
+  return getNext();
+}
+
+/**
+ * 保存 WebSocket 消息并返回序列号（原子操作）
+ */
+export function saveWSMessageAtomic(type: string, data: any): number {
+  const db = getDB();
+  
+  const save = db.transaction(() => {
+    const seq = getNextSeqAtomic();
+    const stmt = db.prepare(`
+      INSERT INTO ws_messages (seq, type, data, created_at)
+      VALUES (?, ?, ?, ?)
+    `);
+    stmt.run(seq, type, JSON.stringify(data), Date.now());
+    return seq;
+  });
+  
+  return save();
+}
+
+/**
+ * 批量确认消息（事务）
+ */
+export function ackMessagesBatch(seqs: number[]): void {
+  const db = getDB();
+  const now = Date.now();
+  
+  const updateMany = db.transaction(() => {
+    const stmt = db.prepare('UPDATE ws_messages SET acked_at = ? WHERE seq = ?');
+    for (const seq of seqs) {
+      stmt.run(now, seq);
+    }
+  });
+  
+  updateMany();
 }

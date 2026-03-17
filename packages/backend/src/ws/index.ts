@@ -16,14 +16,14 @@ const connections = new Set<WebSocketType>();
  * 广播消息到所有连接
  */
 export function broadcast(type: WSMessage['type'], data: Run): number {
-  const seq = db.getNextSeq();
+  // 使用原子操作保存消息
+  const seq = db.saveWSMessageAtomic(type, data);
   const message: WSMessage = { type, data, seq };
-  
-  // 保存到消息表
-  db.saveWSMessage(seq, type, data);
   
   // 推送到所有连接
   const messageStr = JSON.stringify(message);
+  const failedConnections: WebSocketType[] = [];
+  
   for (const ws of connections) {
     try {
       if (ws.readyState === WebSocketOPEN) {
@@ -31,7 +31,13 @@ export function broadcast(type: WSMessage['type'], data: Run): number {
       }
     } catch (e) {
       console.error('[WS] Failed to send:', e);
+      failedConnections.push(ws);
     }
+  }
+  
+  // 清理失败连接
+  for (const ws of failedConnections) {
+    connections.delete(ws);
   }
   
   return seq;
@@ -41,15 +47,17 @@ export function broadcast(type: WSMessage['type'], data: Run): number {
  * 发送消息到特定连接
  */
 export function sendTo(ws: WebSocketType, type: WSMessage['type'], data: Run): number {
-  const seq = db.getNextSeq();
+  // 使用原子操作保存消息
+  const seq = db.saveWSMessageAtomic(type, data);
   const message: WSMessage = { type, data, seq };
   
-  // 保存到消息表
-  db.saveWSMessage(seq, type, data);
-  
   // 发送
-  if (ws.readyState === WebSocketOPEN) {
-    ws.send(JSON.stringify(message));
+  try {
+    if (ws.readyState === WebSocketOPEN) {
+      ws.send(JSON.stringify(message));
+    }
+  } catch (e) {
+    console.error('[WS] Failed to send:', e);
   }
   
   return seq;
@@ -88,7 +96,7 @@ export function handleClientMessage(ws: WebSocketType, data: any): void {
     
     // 批量 ACK
     if (parsed.type === 'ack_batch' && Array.isArray(parsed.seqs)) {
-      db.ackMessages(parsed.seqs);
+      db.ackMessagesBatch(parsed.seqs);
     }
     
     // 重连请求
