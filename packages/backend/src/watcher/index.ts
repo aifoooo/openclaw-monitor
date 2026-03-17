@@ -136,6 +136,7 @@ let onRunUpdate: ((run: Run) => void) | null = null;
 let isProcessing = false;  // 并发锁
 let lastPosition = 0;      // 文件位置
 let isWatcherClosed = false;  // watcher 状态
+let retryTimer: NodeJS.Timeout | null = null;  // 重试定时器
 
 /**
  * 启动文件监听
@@ -190,7 +191,7 @@ export function startWatcher(
   // 错误处理
   watcher.on('error', (error) => {
     console.error(`[Watcher] Error:`, error);
-    setTimeout(() => {
+    retryTimer = setTimeout(() => {
       if (!isWatcherClosed && watcher) {
         console.log('[Watcher] Attempting to re-add file');
         watcher.add(filePath);
@@ -459,6 +460,12 @@ async function processRunEntries(
  */
 export function stopWatcher(): void {
   isWatcherClosed = true;
+  
+  // 清理重试定时器
+  if (retryTimer) {
+    clearTimeout(retryTimer);
+    retryTimer = null;
+  }
   
   if (watcher) {
     watcher.close();

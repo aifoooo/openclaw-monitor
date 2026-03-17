@@ -17,9 +17,14 @@ import type {
 const DEFAULT_CONFIG: MonitorConfig = {
   openclawDir: process.env.OPENCLAW_DIR || '/root/.openclaw',
   cacheTracePath: process.env.CACHE_TRACE_PATH || path.join(process.env.HOME || '/root', '.openclaw/logs/cache-trace.jsonl'),
+  gatewayLogPath: process.env.GATEWAY_LOG_PATH || '/tmp/openclaw/openclaw-*.log',
   dbPath: process.env.DB_PATH || '/var/lib/openclaw-monitor/monitor.db',
   port: parseInt(process.env.PORT || '3000'),
   wsPort: parseInt(process.env.WS_PORT || '3001'),
+  recentLimit: parseInt(process.env.RECENT_LIMIT || '100'),
+  cleanupInterval: parseInt(process.env.CLEANUP_INTERVAL || '3600000'),
+  cacheTracesDaysToKeep: parseInt(process.env.CACHE_TRACES_DAYS || '7'),
+  runsDaysToKeep: parseInt(process.env.RUNS_DAYS || '30'),
 };
 
 let config = { ...DEFAULT_CONFIG };

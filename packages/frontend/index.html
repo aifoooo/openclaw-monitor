@@ -11,24 +11,104 @@
       background: #f5f5f5;
       color: #333;
     }
-    .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
-    h1 { margin-bottom: 20px; color: #2c3e50; }
-    .header { 
-      display: flex; 
-      justify-content: space-between; 
-      align-items: center;
-      margin-bottom: 20px;
+    
+    /* 布局 */
+    .app { display: flex; height: 100vh; }
+    
+    /* 侧边栏 */
+    .sidebar {
+      width: 240px;
+      background: #2c3e50;
+      color: white;
+      display: flex;
+      flex-direction: column;
     }
+    
+    .sidebar-header {
+      padding: 20px;
+      border-bottom: 1px solid #34495e;
+    }
+    
+    .sidebar-header h1 {
+      font-size: 18px;
+      margin-bottom: 5px;
+    }
+    
+    .sidebar-header .version {
+      font-size: 12px;
+      color: #95a5a6;
+    }
+    
+    .sidebar-menu {
+      flex: 1;
+      overflow-y: auto;
+    }
+    
+    .menu-item {
+      padding: 12px 20px;
+      cursor: pointer;
+      border-left: 3px solid transparent;
+      transition: all 0.2s;
+    }
+    
+    .menu-item:hover { background: #34495e; }
+    .menu-item.active { background: #34495e; border-left-color: #3498db; }
+    
+    .menu-item .icon { margin-right: 10px; }
+    
+    /* 主内容区 */
+    .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+    
+    .header {
+      background: white;
+      padding: 15px 20px;
+      border-bottom: 1px solid #e0e0e0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    
+    .header h2 { font-size: 18px; }
+    
     .status { 
-      padding: 8px 16px; 
+      padding: 6px 12px; 
       border-radius: 4px; 
-      font-size: 14px;
+      font-size: 13px;
       font-weight: 500;
     }
     .status.ok { background: #d4edda; color: #155724; }
     .status.error { background: #f8d7da; color: #721c24; }
-    .run-list { display: grid; gap: 12px; }
-    .run-card {
+    
+    /* 内容区 */
+    .content { flex: 1; overflow-y: auto; padding: 20px; }
+    
+    /* 渠道卡片 */
+    .channel-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; }
+    
+    .channel-card {
+      background: white;
+      border-radius: 8px;
+      padding: 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      cursor: pointer;
+      transition: transform 0.2s;
+    }
+    .channel-card:hover { transform: translateY(-2px); }
+    
+    .channel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+    .channel-name { font-size: 18px; font-weight: 600; }
+    .channel-status { padding: 4px 8px; border-radius: 4px; font-size: 12px; }
+    .channel-status.online { background: #d4edda; color: #155724; }
+    .channel-status.offline { background: #f8d7da; color: #721c24; }
+    
+    .channel-info { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; font-size: 13px; color: #666; }
+    .channel-info div { display: flex; flex-direction: column; }
+    .channel-info label { font-size: 11px; color: #999; margin-bottom: 2px; }
+    
+    /* 聊天列表 */
+    .chat-list { display: grid; gap: 12px; }
+    
+    .chat-card {
       background: white;
       border-radius: 8px;
       padding: 16px;
@@ -36,41 +116,82 @@
       cursor: pointer;
       transition: transform 0.2s;
     }
-    .run-card:hover { transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.15); }
-    .run-header { display: flex; justify-content: space-between; margin-bottom: 8px; }
-    .run-id { font-family: monospace; color: #666; font-size: 13px; }
-    .run-status {
-      padding: 4px 8px;
-      border-radius: 4px;
-      font-size: 12px;
-      font-weight: 500;
+    .chat-card:hover { transform: translateY(-2px); }
+    
+    .chat-header { display: flex; justify-content: space-between; margin-bottom: 8px; }
+    .chat-title { font-weight: 600; }
+    .chat-time { font-size: 12px; color: #999; }
+    
+    .chat-info { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; font-size: 12px; color: #666; }
+    
+    /* Run 列表 */
+    .run-list { display: grid; gap: 12px; }
+    
+    .run-card {
+      background: white;
+      border-radius: 8px;
+      padding: 16px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      cursor: pointer;
     }
+    
+    .run-header { display: flex; justify-content: space-between; margin-bottom: 8px; }
+    .run-id { font-family: monospace; font-size: 13px; color: #666; }
+    .run-status { padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 500; }
     .run-status.running { background: #fff3cd; color: #856404; }
     .run-status.completed { background: #d4edda; color: #155724; }
     .run-status.failed { background: #f8d7da; color: #721c24; }
-    .run-info { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; font-size: 13px; color: #666; }
-    .run-info div { display: flex; flex-direction: column; }
-    .run-info label { font-size: 11px; color: #999; margin-bottom: 2px; }
+    
+    .run-info { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; font-size: 12px; color: #666; }
+    
+    /* 操作时间线 */
+    .timeline { position: relative; padding-left: 30px; }
+    .timeline::before { content: ''; position: absolute; left: 10px; top: 0; bottom: 0; width: 2px; background: #e0e0e0; }
+    
+    .timeline-item {
+      position: relative;
+      padding: 12px 0;
+      border-bottom: 1px solid #f0f0f0;
+    }
+    
+    .timeline-item::before {
+      content: '';
+      position: absolute;
+      left: -24px;
+      top: 16px;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #3498db;
+    }
+    
+    .timeline-item.llm::before { background: #9b59b6; }
+    .timeline-item.tool::before { background: #e67e22; }
+    
+    .timeline-time { font-size: 11px; color: #999; margin-bottom: 4px; }
+    .timeline-content { font-size: 13px; }
+    .timeline-duration { font-size: 11px; color: #666; margin-top: 4px; }
+    
+    /* 模态框 */
     .modal {
       display: none;
       position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
+      top: 0; left: 0; right: 0; bottom: 0;
       background: rgba(0,0,0,0.5);
       z-index: 1000;
       overflow: auto;
     }
     .modal.active { display: flex; justify-content: center; align-items: flex-start; padding: 40px; }
+    
     .modal-content {
       background: white;
       border-radius: 8px;
-      max-width: 900px;
+      max-width: 1000px;
       width: 100%;
       max-height: 80vh;
       overflow: auto;
     }
+    
     .modal-header {
       display: flex;
       justify-content: space-between;
@@ -78,7 +199,9 @@
       padding: 20px;
       border-bottom: 1px solid #eee;
     }
+    
     .modal-body { padding: 20px; }
+    
     .close-btn {
       background: none;
       border: none;
@@ -86,38 +209,87 @@
       cursor: pointer;
       color: #999;
     }
+    
+    /* 消息 */
     .messages { margin-top: 20px; }
-    .message { 
-      background: #f8f9fa; 
-      padding: 12px; 
-      border-radius: 6px; 
-      margin-bottom: 12px;
-      font-size: 13px;
-    }
+    .message { background: #f8f9fa; padding: 12px; border-radius: 6px; margin-bottom: 12px; font-size: 13px; }
     .message.user { background: #e3f2fd; }
     .message.assistant { background: #f1f8e9; }
-    .message pre { 
-      white-space: pre-wrap; 
-      word-wrap: break-word;
-      margin: 0;
-      font-family: monospace;
-    }
+    .message pre { white-space: pre-wrap; word-wrap: break-word; margin: 0; font-family: monospace; }
+    
+    /* 加载和错误 */
     .loading { text-align: center; padding: 40px; color: #666; }
     .error { text-align: center; padding: 40px; color: #dc3545; }
+    
+    /* 隐藏 */
+    .hidden { display: none !important; }
   </style>
 </head>
 <body>
-  <div class="container">
-    <div class="header">
-      <h1>🦐 OpenClaw Monitor</h1>
-      <div id="status" class="status ok">连接中...</div>
+  <div class="app">
+    <!-- 侧边栏 -->
+    <div class="sidebar">
+      <div class="sidebar-header">
+        <h1>🦐 OpenClaw Monitor</h1>
+        <div class="version">v2.0.0</div>
+      </div>
+      <div class="sidebar-menu">
+        <div class="menu-item active" data-view="channels">
+          <span class="icon">📋</span>渠道管理
+        </div>
+        <div class="menu-item" data-view="chats">
+          <span class="icon">💬</span>聊天列表
+        </div>
+        <div class="menu-item" data-view="runs">
+          <span class="icon">🔄</span>Run 列表
+        </div>
+        <div class="menu-item" data-view="stats">
+          <span class="icon">📊</span>统计信息
+        </div>
+      </div>
     </div>
-    <div id="runs" class="run-list">
-      <div class="loading">加载中...</div>
+    
+    <!-- 主内容区 -->
+    <div class="main">
+      <div class="header">
+        <h2 id="page-title">渠道管理</h2>
+        <div id="status" class="status ok">已连接</div>
+      </div>
+      
+      <div class="content">
+        <!-- 渠道管理 -->
+        <div id="view-channels" class="view">
+          <div id="channels" class="channel-grid">
+            <div class="loading">加载中...</div>
+          </div>
+        </div>
+        
+        <!-- 聊天列表 -->
+        <div id="view-chats" class="view hidden">
+          <div id="chats" class="chat-list">
+            <div class="loading">加载中...</div>
+          </div>
+        </div>
+        
+        <!-- Run 列表 -->
+        <div id="view-runs" class="view hidden">
+          <div id="runs" class="run-list">
+            <div class="loading">加载中...</div>
+          </div>
+        </div>
+        
+        <!-- 统计信息 -->
+        <div id="view-stats" class="view hidden">
+          <div id="stats">
+            <div class="loading">加载中...</div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
-
-  <div id="modal" class="modal">
+  
+  <!-- Run 详情模态框 -->
+  <div id="run-modal" class="modal">
     <div class="modal-content">
       <div class="modal-header">
         <h2 id="modal-title">Run 详情</h2>
@@ -130,123 +302,275 @@
   <script>
     const API_BASE = window.location.origin;
     let ws = null;
-    let runs = [];
-
-    // 初始化
+    let currentView = 'channels';
+    
+    // ==================== 初始化 ====================
+    
     async function init() {
-      await loadRuns();
+      // 设置菜单点击事件
+      document.querySelectorAll('.menu-item').forEach(item => {
+        item.addEventListener('click', () => {
+          const view = item.dataset.view;
+          switchView(view);
+        });
+      });
+      
+      // 加载初始数据
+      await loadChannels();
+      
+      // 连接 WebSocket
       connectWebSocket();
     }
-
-    // 加载 Runs
+    
+    // ==================== 视图切换 ====================
+    
+    function switchView(view) {
+      currentView = view;
+      
+      // 更新菜单高亮
+      document.querySelectorAll('.menu-item').forEach(item => {
+        item.classList.toggle('active', item.dataset.view === view);
+      });
+      
+      // 更新标题
+      const titles = {
+        channels: '渠道管理',
+        chats: '聊天列表',
+        runs: 'Run 列表',
+        stats: '统计信息',
+      };
+      document.getElementById('page-title').textContent = titles[view] || view;
+      
+      // 切换视图
+      document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
+      document.getElementById(`view-${view}`).classList.remove('hidden');
+      
+      // 加载数据
+      if (view === 'channels') loadChannels();
+      if (view === 'chats') loadChats();
+      if (view === 'runs') loadRuns();
+      if (view === 'stats') loadStats();
+    }
+    
+    // ==================== 数据加载 ====================
+    
+    async function loadChannels() {
+      try {
+        const res = await fetch(`${API_BASE}/api/channels`);
+        if (!res.ok) throw new Error('Failed to load channels');
+        const data = await res.json();
+        renderChannels(data.channels);
+      } catch (e) {
+        console.error('Load channels error:', e);
+        document.getElementById('channels').innerHTML = `<div class="error">加载失败: ${e.message}</div>`;
+      }
+    }
+    
+    async function loadChats() {
+      try {
+        const res = await fetch(`${API_BASE}/api/chats`);
+        if (!res.ok) throw new Error('Failed to load chats');
+        const data = await res.json();
+        renderChats(data.chats);
+      } catch (e) {
+        console.error('Load chats error:', e);
+        document.getElementById('chats').innerHTML = `<div class="error">加载失败: ${e.message}</div>`;
+      }
+    }
+    
     async function loadRuns() {
       try {
         const res = await fetch(`${API_BASE}/api/runs?limit=50`);
         if (!res.ok) throw new Error('Failed to load runs');
         const data = await res.json();
-        runs = data.runs || [];
-        renderRuns();
-        updateStatus('ok', `已连接 · ${runs.length} 条记录`);
+        renderRuns(data.runs);
       } catch (e) {
         console.error('Load runs error:', e);
         document.getElementById('runs').innerHTML = `<div class="error">加载失败: ${e.message}</div>`;
-        updateStatus('error', '加载失败');
       }
     }
-
-    // 渲染 Runs
-    function renderRuns() {
-      if (runs.length === 0) {
-        document.getElementById('runs').innerHTML = '<div class="loading">暂无数据</div>';
-        return;
+    
+    async function loadStats() {
+      try {
+        const res = await fetch(`${API_BASE}/api/stats`);
+        if (!res.ok) throw new Error('Failed to load stats');
+        const data = await res.json();
+        renderStats(data);
+      } catch (e) {
+        console.error('Load stats error:', e);
+        document.getElementById('stats').innerHTML = `<div class="error">加载失败: ${e.message}</div>`;
       }
-
-      document.getElementById('runs').innerHTML = runs.map(run => `
-        <div class="run-card" onclick="showRunDetail('${run.id}')">
-          <div class="run-header">
-            <span class="run-id">${run.id.substring(0, 8)}...</span>
-            <span class="run-status ${run.status}">${run.status}</span>
-          </div>
-          <div class="run-info">
-            <div>
-              <label>Provider</label>
-              <span>${run.provider || '-'}</span>
-            </div>
-            <div>
-              <label>Model</label>
-              <span>${run.modelId || '-'}</span>
-            </div>
-            <div>
-              <label>开始时间</label>
-              <span>${formatTime(run.startedAt)}</span>
-            </div>
-            <div>
-              <label>消息数</label>
-              <span>${run.messageCount || 0}</span>
-            </div>
-          </div>
-        </div>
-      `).join('');
     }
-
-    // 显示 Run 详情
-    async function showRunDetail(runId) {
+    
+    async function loadRunDetail(runId) {
       try {
         const res = await fetch(`${API_BASE}/api/runs/${runId}`);
         if (!res.ok) throw new Error('Failed to load run');
         const run = await res.json();
         
-        document.getElementById('modal-title').textContent = `Run: ${run.id.substring(0, 8)}`;
+        // 加载操作列表
+        const opsRes = await fetch(`${API_BASE}/api/runs/${runId}/operations`);
+        const opsData = opsRes.ok ? await opsRes.json() : { operations: [] };
         
-        let html = `
-          <div class="run-info" style="margin-bottom: 20px;">
-            <div><label>Status</label><span>${run.status}</span></div>
-            <div><label>Provider</label><span>${run.provider || '-'}</span></div>
-            <div><label>Model</label><span>${run.modelId || '-'}</span></div>
-            <div><label>Messages</label><span>${run.messageCount || 0}</span></div>
-          </div>
-        `;
-        
-        if (run.inputMessages && run.inputMessages.length > 0) {
-          html += '<h3 style="margin: 20px 0 10px;">📥 Input Messages</h3>';
-          html += '<div class="messages">' + run.inputMessages.map(msg => 
-            `<div class="message ${msg.role}">
-              <strong>${msg.role}</strong>
-              <pre>${escapeHtml(formatContent(msg.content))}</pre>
-            </div>`
-          ).join('') + '</div>';
-        }
-        
-        if (run.outputMessages && run.outputMessages.length > 0) {
-          html += '<h3 style="margin: 20px 0 10px;">📤 Output Messages</h3>';
-          html += '<div class="messages">' + run.outputMessages.map(msg => 
-            `<div class="message ${msg.role}">
-              <strong>${msg.role}</strong>
-              <pre>${escapeHtml(formatContent(msg.content))}</pre>
-            </div>`
-          ).join('') + '</div>';
-        }
-        
-        document.getElementById('modal-body').innerHTML = html;
-        document.getElementById('modal').classList.add('active');
+        renderRunDetail(run, opsData.operations);
       } catch (e) {
+        console.error('Load run detail error:', e);
         alert('加载详情失败: ' + e.message);
       }
     }
-
-    // 关闭模态框
-    function closeModal() {
-      document.getElementById('modal').classList.remove('active');
+    
+    // ==================== 渲染函数 ====================
+    
+    function renderChannels(channels) {
+      if (channels.length === 0) {
+        document.getElementById('channels').innerHTML = '<div class="loading">暂无渠道</div>';
+        return;
+      }
+      
+      document.getElementById('channels').innerHTML = channels.map(ch => `
+        <div class="channel-card" onclick="showChannelDetail('${ch.id}')">
+          <div class="channel-header">
+            <span class="channel-name">${ch.name}</span>
+            <span class="channel-status ${ch.status}">${ch.status}</span>
+          </div>
+          <div class="channel-info">
+            <div><label>类型</label><span>${ch.type}</span></div>
+            <div><label>账号数</label><span>${ch.accounts?.length || 0}</span></div>
+          </div>
+        </div>
+      `).join('');
     }
-
-    // 连接 WebSocket
+    
+    function renderChats(chats) {
+      if (chats.length === 0) {
+        document.getElementById('chats').innerHTML = '<div class="loading">暂无聊天</div>';
+        return;
+      }
+      
+      document.getElementById('chats').innerHTML = chats.map(chat => `
+        <div class="chat-card" onclick="showChatDetail('${chat.id}')">
+          <div class="chat-header">
+            <span class="chat-title">${chat.title}</span>
+            <span class="chat-time">${formatTime(chat.lastMessageAt)}</span>
+          </div>
+          <div class="chat-info">
+            <div><label>渠道</label><span>${chat.channelId}</span></div>
+            <div><label>消息数</label><span>${chat.messageCount || 0}</span></div>
+            <div><label>Run 数</label><span>${chat.runCount || 0}</span></div>
+          </div>
+        </div>
+      `).join('');
+    }
+    
+    function renderRuns(runs) {
+      if (runs.length === 0) {
+        document.getElementById('runs').innerHTML = '<div class="loading">暂无 Run</div>';
+        return;
+      }
+      
+      document.getElementById('runs').innerHTML = runs.map(run => `
+        <div class="run-card" onclick="loadRunDetail('${run.id}')">
+          <div class="run-header">
+            <span class="run-id">${run.id.substring(0, 8)}...</span>
+            <span class="run-status ${run.status}">${run.status}</span>
+          </div>
+          <div class="run-info">
+            <div><label>Provider</label><span>${run.provider || '-'}</span></div>
+            <div><label>Model</label><span>${run.modelId || '-'}</span></div>
+            <div><label>开始时间</label><span>${formatTime(run.startedAt)}</span></div>
+            <div><label>消息数</label><span>${run.messageCount || 0}</span></div>
+          </div>
+        </div>
+      `).join('');
+    }
+    
+    function renderStats(stats) {
+      document.getElementById('stats').innerHTML = `
+        <div class="channel-grid">
+          <div class="channel-card">
+            <div class="channel-header"><span class="channel-name">渠道</span></div>
+            <div style="font-size: 32px; font-weight: bold; color: #3498db;">${stats.channels}</div>
+          </div>
+          <div class="channel-card">
+            <div class="channel-header"><span class="channel-name">聊天</span></div>
+            <div style="font-size: 32px; font-weight: bold; color: #2ecc71;">${stats.chats}</div>
+          </div>
+          <div class="channel-card">
+            <div class="channel-header"><span class="channel-name">Run</span></div>
+            <div style="font-size: 32px; font-weight: bold; color: #9b59b6;">${stats.runs}</div>
+          </div>
+          <div class="channel-card">
+            <div class="channel-header"><span class="channel-name">操作</span></div>
+            <div style="font-size: 32px; font-weight: bold; color: #e67e22;">${stats.operations}</div>
+          </div>
+        </div>
+      `;
+    }
+    
+    function renderRunDetail(run, operations) {
+      let html = `
+        <div class="run-info" style="margin-bottom: 20px;">
+          <div><label>Status</label><span>${run.status}</span></div>
+          <div><label>Provider</label><span>${run.provider}</span></div>
+          <div><label>Model</label><span>${run.modelId}</span></div>
+          <div><label>Messages</label><span>${run.messageCount}</span></div>
+        </div>
+      `;
+      
+      // 操作时间线
+      if (operations && operations.length > 0) {
+        html += '<h3 style="margin: 20px 0 10px;">⏱️ 操作时间线</h3>';
+        html += '<div class="timeline">';
+        operations.forEach(op => {
+          html += `
+            <div class="timeline-item ${op.type}">
+              <div class="timeline-time">${formatTime(op.startTime)}</div>
+              <div class="timeline-content">
+                ${op.type === 'llm' ? `🤖 ${op.name}` : `🔧 ${op.name}`}
+              </div>
+              ${op.duration ? `<div class="timeline-duration">耗时: ${op.duration}ms</div>` : ''}
+            </div>
+          `;
+        });
+        html += '</div>';
+      }
+      
+      // 输入消息
+      if (run.inputMessages && run.inputMessages.length > 0) {
+        html += '<h3 style="margin: 20px 0 10px;">📥 Input Messages</h3>';
+        html += '<div class="messages">' + run.inputMessages.map(msg => `
+          <div class="message ${msg.role}">
+            <strong>${msg.role}</strong>
+            <pre>${escapeHtml(formatContent(msg.content))}</pre>
+          </div>
+        `).join('') + '</div>';
+      }
+      
+      // 输出消息
+      if (run.outputMessages && run.outputMessages.length > 0) {
+        html += '<h3 style="margin: 20px 0 10px;">📤 Output Messages</h3>';
+        html += '<div class="messages">' + run.outputMessages.map(msg => `
+          <div class="message ${msg.role}">
+            <strong>${msg.role}</strong>
+            <pre>${escapeHtml(formatContent(msg.content))}</pre>
+          </div>
+        `).join('') + '</div>';
+      }
+      
+      document.getElementById('modal-title').textContent = `Run: ${run.id.substring(0, 8)}`;
+      document.getElementById('modal-body').innerHTML = html;
+      document.getElementById('run-modal').classList.add('active');
+    }
+    
+    // ==================== WebSocket ====================
+    
     function connectWebSocket() {
       const wsUrl = `${API_BASE.replace('http', 'ws')}/ws`;
       ws = new WebSocket(wsUrl);
       
       ws.onopen = () => {
         console.log('WebSocket connected');
-        updateStatus('ok', `已连接 · ${runs.length} 条记录`);
+        updateStatus('ok', '已连接');
       };
       
       ws.onmessage = (event) => {
@@ -254,8 +578,10 @@
           const data = JSON.parse(event.data);
           console.log('WebSocket message:', data);
           
+          // 刷新当前视图
           if (data.type === 'run:started' || data.type === 'run:completed') {
-            loadRuns(); // 重新加载列表
+            if (currentView === 'runs') loadRuns();
+            if (currentView === 'stats') loadStats();
           }
         } catch (e) {
           console.error('Parse WebSocket message error:', e);
@@ -264,24 +590,24 @@
       
       ws.onerror = (error) => {
         console.error('WebSocket error:', error);
-        updateStatus('error', 'WebSocket 错误');
+        updateStatus('error', '连接错误');
       };
       
       ws.onclose = () => {
         console.log('WebSocket closed');
         updateStatus('error', '连接断开');
-        setTimeout(connectWebSocket, 5000); // 5秒后重连
+        setTimeout(connectWebSocket, 5000);
       };
     }
-
-    // 更新状态
+    
     function updateStatus(type, text) {
       const status = document.getElementById('status');
       status.className = `status ${type}`;
       status.textContent = text;
     }
-
-    // 格式化时间
+    
+    // ==================== 工具函数 ====================
+    
     function formatTime(timestamp) {
       if (!timestamp) return '-';
       const date = new Date(timestamp);
@@ -292,8 +618,7 @@
         minute: '2-digit'
       });
     }
-
-    // 格式化内容
+    
     function formatContent(content) {
       if (typeof content === 'string') return content;
       if (Array.isArray(content)) {
@@ -305,14 +630,27 @@
       }
       return JSON.stringify(content, null, 2);
     }
-
-    // 转义 HTML
+    
     function escapeHtml(text) {
       const div = document.createElement('div');
       div.textContent = text;
       return div.innerHTML;
     }
-
+    
+    function closeModal() {
+      document.getElementById('run-modal').classList.remove('active');
+    }
+    
+    function showChannelDetail(channelId) {
+      // TODO: 显示渠道详情
+      alert(`渠道详情: ${channelId}`);
+    }
+    
+    function showChatDetail(chatId) {
+      // TODO: 显示聊天详情
+      alert(`聊天详情: ${chatId}`);
+    }
+    
     // 启动
     init();
   </script>

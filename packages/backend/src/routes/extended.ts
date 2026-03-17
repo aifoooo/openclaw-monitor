@@ -1,0 +1,273 @@
+/**
+ * API 路由扩展
+ * 
+ * 新增端点：
+ * - /api/channels - 渠道管理
+ * - /api/chats - 聊天管理
+ * - /api/runs/:runId/operations - 操作追踪
+ */
+
+import { Hono } from 'hono';
+import * as db from '../db';
+import * as dbExt from '../db/extended';
+import * as channel from '../channel';
+import * as chat from '../chat';
+import type { MonitorConfig } from '../types';
+
+export function createExtendedRoutes(config: MonitorConfig): Hono {
+  const api = new Hono();
+  
+  // ==================== 渠道管理 ====================
+  
+  /**
+   * GET /api/channels - 获取渠道列表
+   */
+  api.get('/channels', (c) => {
+    try {
+      // 从数据库获取
+      let channels = dbExt.getChannels();
+      
+      // 如果数据库为空，从配置文件解析
+      if (channels.length === 0) {
+        const result = channel.parseOpenClawConfig(config.openclawDir);
+        channels = result.channels;
+        
+        // 保存到数据库
+        channels.forEach(ch => dbExt.saveChannel(ch));
+      }
+      
+      return c.json({
+        channels,
+        total: channels.length,
+      });
+    } catch (e) {
+      console.error('[API] Error getting channels:', e);
+      return c.json({ error: 'Failed to get channels' }, 500);
+    }
+  });
+  
+  /**
+   * GET /api/channels/:channelId - 获取渠道详情
+   */
+  api.get('/channels/:channelId', (c) => {
+    const channelId = c.req.param('channelId');
+    
+    try {
+      const ch = dbExt.getChannel(channelId);
+      
+      if (!ch) {
+        return c.json({ error: 'Channel not found' }, 404);
+      }
+      
+      // 获取该渠道的统计信息
+      const stats = {
+        chatCount: 0,
+        runCount: 0,
+        lastActivity: null as number | null,
+      };
+      
+      // TODO: 从数据库计算统计信息
+      
+      return c.json({
+        channel: ch,
+        stats,
+      });
+    } catch (e) {
+      console.error('[API] Error getting channel:', e);
+      return c.json({ error: 'Failed to get channel' }, 500);
+    }
+  });
+  
+  /**
+   * POST /api/channels/refresh - 刷新渠道信息
+   */
+  api.post('/channels/refresh', (c) => {
+    try {
+      const result = channel.parseOpenClawConfig(config.openclawDir);
+      
+      // 保存到数据库
+      result.channels.forEach(ch => dbExt.saveChannel(ch));
+      
+      return c.json({
+        status: 'ok',
+        channels: result.channels.length,
+        message: 'Channels refreshed successfully',
+      });
+    } catch (e) {
+      console.error('[API] Error refreshing channels:', e);
+      return c.json({ error: 'Failed to refresh channels' }, 500);
+    }
+  });
+  
+  // ==================== 聊天管理 ====================
+  
+  /**
+   * GET /api/chats - 获取聊天列表
+   */
+  api.get('/chats', (c) => {
+    const channelId = c.req.query('channelId');
+    const limitParam = c.req.query('limit');
+    const offsetParam = c.req.query('offset');
+    
+    const limit = parseInt(limitParam || '50');
+    const offset = parseInt(offsetParam || '0');
+    
+    try {
+      const chats = dbExt.getChats(channelId, limit, offset);
+      
+      return c.json({
+        chats,
+        total: chats.length,
+        limit,
+        offset,
+      });
+    } catch (e) {
+      console.error('[API] Error getting chats:', e);
+      return c.json({ error: 'Failed to get chats' }, 500);
+    }
+  });
+  
+  /**
+   * GET /api/chats/:chatId - 获取聊天详情
+   */
+  api.get('/chats/:chatId', async (c) => {
+    const chatId = c.req.param('chatId');
+    
+    try {
+      const ch = dbExt.getChat(chatId);
+      
+      if (!ch) {
+        return c.json({ error: 'Chat not found' }, 404);
+      }
+      
+      // 获取消息列表
+      let messages: any[] = [];
+      if (ch.sessionFile) {
+        messages = await chat.getChatMessages(ch.sessionFile, 20);
+      }
+      
+      // 获取 Run 列表
+      const runs = db.getRuns({ limit: 10 });
+      
+      return c.json({
+        chat: ch,
+        messages,
+        runs,
+      });
+    } catch (e) {
+      console.error('[API] Error getting chat:', e);
+      return c.json({ error: 'Failed to get chat' }, 500);
+    }
+  });
+  
+  /**
+   * GET /api/chats/:chatId/messages - 获取聊天消息
+   */
+  api.get('/chats/:chatId/messages', async (c) => {
+    const chatId = c.req.param('chatId');
+    const limitParam = c.req.query('limit');
+    const offsetParam = c.req.query('offset');
+    
+    const limit = parseInt(limitParam || '50');
+    const offset = parseInt(offsetParam || '0');
+    
+    try {
+      const ch = dbExt.getChat(chatId);
+      
+      if (!ch) {
+        return c.json({ error: 'Chat not found' }, 404);
+      }
+      
+      let messages: any[] = [];
+      if (ch.sessionFile) {
+        messages = await chat.getChatMessages(ch.sessionFile, limit, offset);
+      }
+      
+      return c.json({
+        messages,
+        total: messages.length,
+        limit,
+        offset,
+      });
+    } catch (e) {
+      console.error('[API] Error getting messages:', e);
+      return c.json({ error: 'Failed to get messages' }, 500);
+    }
+  });
+  
+  /**
+   * POST /api/chats/scan - 扫描聊天
+   */
+  api.post('/chats/scan', async (c) => {
+    try {
+      const channels = dbExt.getChannels();
+      const allChats = await chat.scanAllSessions(config.openclawDir, channels);
+      
+      // 保存到数据库
+      allChats.forEach(ch => dbExt.saveChat(ch));
+      
+      return c.json({
+        status: 'ok',
+        chats: allChats.length,
+        message: 'Chats scanned successfully',
+      });
+    } catch (e) {
+      console.error('[API] Error scanning chats:', e);
+      return c.json({ error: 'Failed to scan chats' }, 500);
+    }
+  });
+  
+  // ==================== 操作追踪 ====================
+  
+  /**
+   * GET /api/runs/:runId/operations - 获取 Run 操作列表
+   */
+  api.get('/runs/:runId/operations', (c) => {
+    const runId = c.req.param('runId');
+    
+    try {
+      const operations = dbExt.getOperationsByRunId(runId);
+      const count = dbExt.getOperationCountByRunId(runId);
+      
+      return c.json({
+        operations,
+        summary: {
+          total: operations.length,
+          llmCalls: count.llm,
+          toolCalls: count.tool,
+        },
+      });
+    } catch (e) {
+      console.error('[API] Error getting operations:', e);
+      return c.json({ error: 'Failed to get operations' }, 500);
+    }
+  });
+  
+  // ==================== 统计信息 ====================
+  
+  /**
+   * GET /api/stats - 获取统计信息
+   */
+  api.get('/stats', (c) => {
+    try {
+      const stats = dbExt.getDBStats();
+      
+      // 添加更多统计信息
+      const recentRuns = db.getRuns({ limit: 10 });
+      const avgDuration = recentRuns.length > 0
+        ? recentRuns.reduce((sum, r) => sum + (r.completedAt || 0) - r.startedAt, 0) / recentRuns.length
+        : 0;
+      
+      return c.json({
+        ...stats,
+        recentRuns: recentRuns.length,
+        avgDuration: Math.round(avgDuration),
+      });
+    } catch (e) {
+      console.error('[API] Error getting stats:', e);
+      return c.json({ error: 'Failed to get stats' }, 500);
+    }
+  });
+  
+  return api;
+}
