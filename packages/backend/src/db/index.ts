@@ -26,6 +26,7 @@ export function initDB(dbPath: string): Database.Database {
   
   db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
+  db.pragma('synchronous = NORMAL');  // ✅ 性能优化：减少 fsync
   
   // 创建表
   db.exec(`
@@ -135,13 +136,17 @@ export function saveCacheTrace(entry: DBCacheTrace): void {
   );
 }
 
-export function getCacheTracesByRunId(runId: string): DBCacheTrace[] {
+/**
+ * ✅ 优化：获取 Run 的 Cache Traces（限制返回数量）
+ */
+export function getCacheTracesByRunId(runId: string, limit: number = 5000): DBCacheTrace[] {
   const stmt = getDB().prepare(`
     SELECT * FROM cache_traces 
     WHERE run_id = ? 
     ORDER BY seq ASC
+    LIMIT ?
   `);
-  return stmt.all(runId) as DBCacheTrace[];
+  return stmt.all(runId, limit) as DBCacheTrace[];
 }
 
 // ==================== Run 操作 ====================
@@ -302,19 +307,23 @@ export function ackMessages(seqs: number[]): void {
   }
 }
 
-// 清理已确认的旧消息（保留最近 1000 条）
+// ✅ 清理已确认的旧消息（保留最近 1000 条）
 export function cleanupOldMessages(): void {
-  const stmt = getDB().prepare(`
-    DELETE FROM ws_messages 
-    WHERE acked_at IS NOT NULL 
-    AND id < (
-      SELECT id FROM ws_messages 
+  try {
+    const stmt = getDB().prepare(`
+      DELETE FROM ws_messages 
       WHERE acked_at IS NOT NULL 
-      ORDER BY id DESC 
-      LIMIT 1 OFFSET 1000
-    )
-  `);
-  stmt.run();
+      AND id < (
+        SELECT id FROM ws_messages 
+        WHERE acked_at IS NOT NULL 
+        ORDER BY id DESC 
+        LIMIT 1 OFFSET 1000
+      )
+    `);
+    stmt.run();
+  } catch (e) {
+    console.error('[DB] Cleanup old messages failed:', e);
+  }
 }
 
 // ==================== 文件位置操作 ====================
@@ -382,7 +391,6 @@ export function saveCacheTracesBatch(entries: DBCacheTrace[]): void {
 export function getNextSeqAtomic(): number {
   const db = getDB();
   
-  // 使用事务确保原子性
   const getNext = db.transaction(() => {
     const stmt = db.prepare('SELECT MAX(seq) as max_seq FROM ws_messages');
     const row = stmt.get() as { max_seq: number | null };
@@ -427,4 +435,91 @@ export function ackMessagesBatch(seqs: number[]): void {
   });
   
   updateMany();
+}
+
+// ==================== ✅ 性能优化：定期清理 ====================
+
+/**
+ * 清理旧的 Cache Traces（保留最近 N 天）
+ */
+export function cleanupOldCacheTraces(daysToKeep: number = 7): number {
+  const cutoffTime = Date.now() - daysToKeep * 24 * 60 * 60 * 1000;
+  
+  try {
+    const stmt = getDB().prepare(`
+      DELETE FROM cache_traces 
+      WHERE timestamp < ?
+    `);
+    const result = stmt.run(cutoffTime);
+    
+    console.log(`[DB] Cleaned up ${result.changes} old cache traces (older than ${daysToKeep} days)`);
+    return result.changes;
+  } catch (e) {
+    console.error('[DB] Cleanup cache traces failed:', e);
+    return 0;
+  }
+}
+
+/**
+ * 清理旧的 Runs（保留最近 N 天）
+ */
+export function cleanupOldRuns(daysToKeep: number = 30): number {
+  const cutoffTime = Date.now() - daysToKeep * 24 * 60 * 60 * 1000;
+  
+  try {
+    const stmt = getDB().prepare(`
+      DELETE FROM runs 
+      WHERE started_at < ?
+    `);
+    const result = stmt.run(cutoffTime);
+    
+    console.log(`[DB] Cleaned up ${result.changes} old runs (older than ${daysToKeep} days)`);
+    return result.changes;
+  } catch (e) {
+    console.error('[DB] Cleanup runs failed:', e);
+    return 0;
+  }
+}
+
+/**
+ * VACUUM 数据库（回收空间）
+ */
+export function vacuumDatabase(): void {
+  try {
+    getDB().exec('VACUUM');
+    console.log('[DB] Database vacuumed');
+  } catch (e) {
+    console.error('[DB] Vacuum failed:', e);
+  }
+}
+
+/**
+ * 获取数据库统计信息
+ */
+export function getStats(): {
+  cacheTracesCount: number;
+  runsCount: number;
+  wsMessagesCount: number;
+  dbSizeMB: number;
+} {
+  const db = getDB();
+  
+  const cacheTracesCount = (db.prepare('SELECT COUNT(*) as count FROM cache_traces').get() as { count: number }).count;
+  const runsCount = (db.prepare('SELECT COUNT(*) as count FROM runs').get() as { count: number }).count;
+  const wsMessagesCount = (db.prepare('SELECT COUNT(*) as count FROM ws_messages').get() as { count: number }).count;
+  
+  // 数据库文件大小
+  const dbPath = db.name;
+  let dbSizeMB = 0;
+  try {
+    const stat = fs.statSync(dbPath);
+    dbSizeMB = Math.round(stat.size / 1024 / 1024);
+  } catch (e) {}
+  
+  return {
+    cacheTracesCount,
+    runsCount,
+    wsMessagesCount,
+    dbSizeMB,
+  };
 }

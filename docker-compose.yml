@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  openclaw-monitor:
+    build: 
+      context: ./packages/backend
+      dockerfile: Dockerfile
+    container_name: openclaw-monitor
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - DB_PATH=/var/lib/openclaw-monitor/monitor.db
+      - OPENCLAW_DIR=/root/.openclaw
+      - CACHE_TRACE_PATH=/root/.openclaw/logs/cache-trace.jsonl
+      - API_KEY=${API_KEY:-}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:3000}
+      - CLEANUP_INTERVAL=3600000
+      - CACHE_TRACES_DAYS=7
+      - RUNS_DAYS=30
+    volumes:
+      - openclaw-monitor-data:/var/lib/openclaw-monitor
+      - ${HOME}/.openclaw:/root/.openclaw:ro
+    networks:
+      - openclaw-network
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  openclaw-monitor-data:
+    driver: local
+
+networks:
+  openclaw-network:
+    driver: bridge
