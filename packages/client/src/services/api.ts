@@ -28,16 +28,14 @@ export async function fetchChats(channel: string, limit = 50, offset = 0) {
 }
 
 export async function fetchMessages(chatId: string, limit = 100) {
-  const response = await api.get('/api/messages', {
-    params: { chat: chatId, limit }
+  const response = await api.get(`/api/chats/${chatId}/messages`, {
+    params: { limit }
   });
   return response.data;
 }
 
-export async function fetchOperations(messageId: string) {
-  const response = await api.get('/api/operations', {
-    params: { message: messageId }
-  });
+export async function fetchOperations(runId: string) {
+  const response = await api.get(`/api/runs/${runId}/operations`);
   return response.data;
 }
 
