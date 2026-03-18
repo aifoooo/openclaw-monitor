@@ -20,9 +20,9 @@ export async function fetchChannels() {
   return response.data;
 }
 
-export async function fetchChats(channel: string, limit = 50, offset = 0) {
+export async function fetchChats(channelId: string, limit = 50, offset = 0) {
   const response = await api.get('/api/chats', {
-    params: { channel, limit, offset }
+    params: { channelId, limit, offset }
   });
   return response.data;
 }
