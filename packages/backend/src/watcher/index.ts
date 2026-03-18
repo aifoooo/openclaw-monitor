@@ -328,10 +328,10 @@ async function processNewLines(
       }
     }
     
-    // 批量保存
-    if (cacheTraces.length > 0) {
-      db.saveCacheTracesBatch(cacheTraces);
-    }
+    // ✅ 不再存储原始 cache_traces，直接处理聚合数据
+    // if (cacheTraces.length > 0) {
+    //   // db.saveCacheTracesBatch(cacheTraces);
+    // }
     
     for (const [runId, entries] of runEntries) {
       await processRunEntries(runId, entries);
@@ -387,7 +387,7 @@ async function processNewLinesSmall(
     }
     
     if (cacheTraces.length > 0) {
-      db.saveCacheTracesBatch(cacheTraces);
+      // db.saveCacheTracesBatch(cacheTraces);
     }
     
     for (const [runId, entries] of runEntries) {
@@ -543,7 +543,7 @@ export async function initializeIncremental(
       }
       
       if (cacheTraces.length > 0) {
-        db.saveCacheTracesBatch(cacheTraces);
+        // db.saveCacheTracesBatch(cacheTraces);
       }
       
       for (const [runId, runEntryList] of runEntries) {
@@ -594,7 +594,7 @@ export async function initializeIncremental(
     }
     
     if (cacheTraces.length > 0) {
-      db.saveCacheTracesBatch(cacheTraces);
+      // db.saveCacheTracesBatch(cacheTraces);
     }
     
     for (const [runId, runEntryList] of runEntries) {
@@ -665,7 +665,7 @@ export async function reparseAll(
     }
     
     if (cacheTraces.length > 0) {
-      db.saveCacheTracesBatch(cacheTraces);
+      // db.saveCacheTracesBatch(cacheTraces);
     }
     
     for (const [runId, runEntryList] of runEntries) {

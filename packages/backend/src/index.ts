@@ -67,7 +67,7 @@ function startDatabaseCleanup(): void {
     
     // 打印统计信息
     const stats = getStats();
-    console.log(`[Monitor] DB Stats: ${stats.runsCount} runs, ${stats.cacheTracesCount} traces, ${stats.dbSizeMB}MB`);
+    console.log(`[Monitor] DB Stats: ${stats.runsCount} runs, ${stats.dbSizeMB}MB`);
   }, config.cleanupInterval);
   
   console.log(`[Monitor] Database cleanup started, interval: ${config.cleanupInterval}ms`);
@@ -111,7 +111,7 @@ initializeIncremental(config.cacheTracePath, { recentLimit: config.recentLimit }
     
     // 打印初始统计
     const stats = getStats();
-    console.log(`[Monitor] Initial stats: ${stats.runsCount} runs, ${stats.cacheTracesCount} traces, ${stats.dbSizeMB}MB`);
+    console.log(`[Monitor] Initial stats: ${stats.runsCount} runs, ${stats.dbSizeMB}MB`);
   })
   .catch(e => {
     console.error('[Monitor] Initialization failed:', e);

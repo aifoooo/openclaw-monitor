@@ -30,23 +30,24 @@ export function initDB(dbPath: string): Database.Database {
   
   // 创建表
   db.exec(`
-    -- Cache Trace 原始数据
-    CREATE TABLE IF NOT EXISTS cache_traces (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      run_id TEXT NOT NULL,
-      session_id TEXT NOT NULL,
-      session_key TEXT NOT NULL,
-      provider TEXT NOT NULL,
-      model_id TEXT NOT NULL,
-      stage TEXT NOT NULL,
-      seq INTEGER NOT NULL,
-      timestamp INTEGER NOT NULL,
-      raw TEXT NOT NULL,
-      created_at INTEGER NOT NULL
-    );
-    
-    CREATE INDEX IF NOT EXISTS idx_cache_traces_run_id ON cache_traces(run_id);
-    CREATE INDEX IF NOT EXISTS idx_cache_traces_timestamp ON cache_traces(timestamp);
+    -- ✅ 不再存储原始 cache_traces，只保留聚合后的 runs 表
+    -- -- Cache Trace 原始数据
+    -- CREATE TABLE IF NOT EXISTS cache_traces (
+    --   id INTEGER PRIMARY KEY AUTOINCREMENT,
+    --   run_id TEXT NOT NULL,
+    --   session_id TEXT NOT NULL,
+    --   session_key TEXT NOT NULL,
+    --   provider TEXT NOT NULL,
+    --   model_id TEXT NOT NULL,
+    --   stage TEXT NOT NULL,
+    --   seq INTEGER NOT NULL,
+    --   timestamp INTEGER NOT NULL,
+    --   raw TEXT NOT NULL,
+    --   created_at INTEGER NOT NULL
+    -- );
+    -- 
+    -- CREATE INDEX IF NOT EXISTS idx_cache_traces_run_id ON cache_traces(run_id);
+    -- CREATE INDEX IF NOT EXISTS idx_cache_traces_timestamp ON cache_traces(timestamp);
     
     -- Run 聚合数据
     CREATE TABLE IF NOT EXISTS runs (
@@ -113,40 +114,16 @@ export function closeDB(): void {
 }
 
 // ==================== Cache Trace 操作 ====================
+// ✅ 已废弃：不再存储原始 cache_traces
 
-export function saveCacheTrace(entry: DBCacheTrace): void {
-  const stmt = getDB().prepare(`
-    INSERT INTO cache_traces (
-      run_id, session_id, session_key, provider, model_id,
-      stage, seq, timestamp, raw, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  
-  stmt.run(
-    entry.runId,
-    entry.sessionId,
-    entry.sessionKey,
-    entry.provider,
-    entry.modelId,
-    entry.stage,
-    entry.seq,
-    entry.timestamp,
-    entry.raw,
-    entry.createdAt
-  );
+export function saveCacheTrace(_entry: DBCacheTrace): void {
+  // 不再存储原始 cache_traces
+  console.log('[DB] saveCacheTrace: deprecated, skipping');
 }
 
-/**
- * ✅ 优化：获取 Run 的 Cache Traces（限制返回数量）
- */
-export function getCacheTracesByRunId(runId: string, limit: number = 5000): DBCacheTrace[] {
-  const stmt = getDB().prepare(`
-    SELECT * FROM cache_traces 
-    WHERE run_id = ? 
-    ORDER BY seq ASC
-    LIMIT ?
-  `);
-  return stmt.all(runId, limit) as DBCacheTrace[];
+export function getCacheTracesByRunId(_runId: string, _limit: number = 5000): DBCacheTrace[] {
+  // 不再存储原始 cache_traces
+  return [];
 }
 
 // ==================== Run 操作 ====================
@@ -356,33 +333,10 @@ export function transaction<T>(fn: () => T): T {
 
 /**
  * 批量保存 Cache Trace（事务）
+ * ✅ 已废弃：不再存储原始 cache_traces
  */
-export function saveCacheTracesBatch(entries: DBCacheTrace[]): void {
-  const stmt = getDB().prepare(`
-    INSERT INTO cache_traces (
-      run_id, session_id, session_key, provider, model_id,
-      stage, seq, timestamp, raw, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  
-  const insertMany = getDB().transaction(() => {
-    for (const entry of entries) {
-      stmt.run(
-        entry.runId,
-        entry.sessionId,
-        entry.sessionKey,
-        entry.provider,
-        entry.modelId,
-        entry.stage,
-        entry.seq,
-        entry.timestamp,
-        entry.raw,
-        entry.createdAt
-      );
-    }
-  });
-  
-  insertMany();
+export function saveCacheTracesBatch(_entries: DBCacheTrace[]): void {
+  // 不再存储原始 cache_traces
 }
 
 /**
@@ -441,23 +395,11 @@ export function ackMessagesBatch(seqs: number[]): void {
 
 /**
  * 清理旧的 Cache Traces（保留最近 N 天）
+ * ✅ 已废弃：不再存储原始 cache_traces
  */
-export function cleanupOldCacheTraces(daysToKeep: number = 7): number {
-  const cutoffTime = Date.now() - daysToKeep * 24 * 60 * 60 * 1000;
-  
-  try {
-    const stmt = getDB().prepare(`
-      DELETE FROM cache_traces 
-      WHERE timestamp < ?
-    `);
-    const result = stmt.run(cutoffTime);
-    
-    console.log(`[DB] Cleaned up ${result.changes} old cache traces (older than ${daysToKeep} days)`);
-    return result.changes;
-  } catch (e) {
-    console.error('[DB] Cleanup cache traces failed:', e);
-    return 0;
-  }
+export function cleanupOldCacheTraces(_daysToKeep: number = 7): number {
+  // 不再存储原始 cache_traces
+  return 0;
 }
 
 /**
@@ -497,14 +439,12 @@ export function vacuumDatabase(): void {
  * 获取数据库统计信息
  */
 export function getStats(): {
-  cacheTracesCount: number;
   runsCount: number;
   wsMessagesCount: number;
   dbSizeMB: number;
 } {
   const db = getDB();
   
-  const cacheTracesCount = (db.prepare('SELECT COUNT(*) as count FROM cache_traces').get() as { count: number }).count;
   const runsCount = (db.prepare('SELECT COUNT(*) as count FROM runs').get() as { count: number }).count;
   const wsMessagesCount = (db.prepare('SELECT COUNT(*) as count FROM ws_messages').get() as { count: number }).count;
   
@@ -517,7 +457,6 @@ export function getStats(): {
   } catch (e) {}
   
   return {
-    cacheTracesCount,
     runsCount,
     wsMessagesCount,
     dbSizeMB,
