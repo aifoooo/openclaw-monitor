@@ -3,6 +3,10 @@
     <header class="header">
       <h1>OpenClaw Monitor</h1>
       <div class="header-actions">
+        <select v-model="selectedChannel" @change="onChannelChange" class="channel-select">
+          <option value="">全部渠道</option>
+          <option v-for="ch in channels" :key="ch.id" :value="ch.id">{{ ch.name }}</option>
+        </select>
         <span class="status" :class="connected ? 'connected' : 'disconnected'">
           {{ connected ? '已连接' : '未连接' }}
         </span>
@@ -11,7 +15,7 @@
     
     <div class="main-content">
       <aside class="sidebar">
-        <ChatList @chat-selected="onChatSelected" />
+        <ChatList :channel-id="selectedChannel" @chat-selected="onChatSelected" />
       </aside>
       
       <main class="content">
@@ -29,21 +33,38 @@
 import { ref, onMounted, onUnmounted } from 'vue';
 import ChatList from '../components/ChatList.vue';
 import MessageDetail from '../components/MessageDetail.vue';
+import { fetchChannels } from '../services/api';
 
+const channels = ref<any[]>([]);
+const selectedChannel = ref('');
 const selectedChat = ref<any>(null);
 const connected = ref(false);
+
+async function loadChannels() {
+  try {
+    const data = await fetchChannels();
+    channels.value = data.channels || [];
+  } catch (error) {
+    console.error('Failed to load channels:', error);
+  }
+}
+
+function onChannelChange() {
+  // 清空选中的聊天
+  selectedChat.value = null;
+}
 
 function onChatSelected(chat: any) {
   selectedChat.value = chat;
 }
 
 onMounted(() => {
-  // 可以在这里初始化 WebSocket 连接
+  loadChannels();
   connected.value = true;
 });
 
 onUnmounted(() => {
-  // 清理 WebSocket 连接
+  // 清理
 });
 </script>
 
@@ -68,6 +89,26 @@ onUnmounted(() => {
   font-size: 20px;
   font-weight: 600;
   color: #333;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.channel-select {
+  padding: 8px 12px;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  font-size: 14px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.channel-select:focus {
+  outline: none;
+  border-color: #1976d2;
 }
 
 .status {

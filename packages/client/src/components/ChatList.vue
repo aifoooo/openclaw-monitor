@@ -2,7 +2,7 @@
   <div class="chat-list">
     <div class="header">
       <h2>聊天列表</h2>
-      <span class="count">{{ chats.length }} 个会话</span>
+      <span class="count">{{ filteredChats.length }} 个会话</span>
     </div>
     
     <div class="search">
@@ -41,6 +41,10 @@ interface Chat {
   messageCount: number;
 }
 
+const props = defineProps<{
+  channelId?: string;
+}>();
+
 const chats = ref<Chat[]>([]);
 const searchQuery = ref('');
 const selectedChatId = ref<string>('');
@@ -48,6 +52,11 @@ const loading = ref(false);
 
 const filteredChats = computed(() => {
   let result = chats.value;
+  
+  // 按渠道筛选
+  if (props.channelId) {
+    result = result.filter(chat => chat.channelId === props.channelId);
+  }
   
   // 搜索过滤
   if (searchQuery.value) {
@@ -66,7 +75,7 @@ const filteredChats = computed(() => {
 async function loadChats() {
   loading.value = true;
   try {
-    // 不传 channelId，加载所有聊天
+    // 加载所有聊天
     const data = await fetchChats();
     chats.value = data.chats || [];
   } catch (error) {
