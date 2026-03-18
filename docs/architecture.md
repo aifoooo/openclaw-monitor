@@ -32,6 +32,24 @@
 
 **位置**：`~/.openclaw/logs/cache-trace.jsonl`
 
+**配置要求**：
+
+```json
+{
+  "diagnostics": {
+    "enabled": true,
+    "cacheTrace": {
+      "enabled": true,
+      "includeMessages": true,
+      "includePrompt": false,
+      "includeSystem": false
+    }
+  }
+}
+```
+
+> **注意**：关闭 `includePrompt` 和 `includeSystem` 可减少 90% 文件大小。
+
 **Stage 类型**：
 
 | Stage | 说明 | 包含信息 |
@@ -82,7 +100,7 @@
 ### 流程说明
 
 1. **数据采集**：Watcher 监听文件变更 → Parser 解析日志 → Merger 合并数据
-2. **数据存储**：解析结果存入 SQLite（Channel/Chat/Message/Run/Operation 表）
+2. **数据存储**：解析结果聚合后存入 SQLite（仅 runs 表）
 3. **实时推送**：WebSocket 推送 run:started/completed/updated 事件
 4. **前端展示**：Vue 3 前端实时更新渠道、聊天、消息、Run 详情
 
@@ -125,10 +143,15 @@
 
 ## 六、数据库设计
 
+### 设计原则
+
+- **不存储原始数据**：仅保留聚合后的 runs 表，避免数据膨胀
+- **定期清理**：通过 cron 任务定期清理过期数据
+
 ### 核心表
 
 ```sql
--- Run 聚合数据
+-- Run 聚合数据（唯一数据源）
 CREATE TABLE runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   run_id TEXT UNIQUE NOT NULL,
@@ -136,58 +159,67 @@ CREATE TABLE runs (
   session_key TEXT NOT NULL,
   provider TEXT NOT NULL,
   model_id TEXT NOT NULL,
+  workspace_dir TEXT,
   started_at INTEGER NOT NULL,
   completed_at INTEGER,
   status TEXT NOT NULL,
+  input_messages TEXT,
+  output_messages TEXT,
   message_count INTEGER DEFAULT 0,
+  stages TEXT,
+  error TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
   INDEX idx_session_id (session_id),
   INDEX idx_started_at (started_at)
 );
 
--- 渠道
-CREATE TABLE channels (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  type TEXT NOT NULL,
-  status TEXT NOT NULL
-);
-
--- 聊天
-CREATE TABLE chats (
-  id TEXT PRIMARY KEY,
-  channel_id TEXT NOT NULL,
-  session_key TEXT NOT NULL,
-  title TEXT,
-  message_count INTEGER DEFAULT 0,
-  INDEX idx_channel_id (channel_id)
-);
-
--- 消息
-CREATE TABLE messages (
-  id TEXT PRIMARY KEY,
-  chat_id TEXT NOT NULL,
-  run_id TEXT,
-  role TEXT NOT NULL,
-  content TEXT NOT NULL,
-  timestamp INTEGER NOT NULL,
-  INDEX idx_chat_id (chat_id),
-  INDEX idx_run_id (run_id)
-);
-
--- 操作
-CREATE TABLE operations (
+-- WebSocket 消息（用于重连恢复）
+CREATE TABLE ws_messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  run_id TEXT NOT NULL,
+  seq INTEGER UNIQUE NOT NULL,
   type TEXT NOT NULL,
-  tool_name TEXT,
-  duration_ms INTEGER,
-  INDEX idx_run_id (run_id)
+  data TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  acked_at INTEGER,
+  INDEX idx_seq (seq)
+);
+
+-- 文件位置记录（增量解析）
+CREATE TABLE file_positions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  file_path TEXT UNIQUE NOT NULL,
+  position INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
 );
 ```
 
 ---
 
-## 七、容错设计
+## 七、数据清理策略
+
+### 7.1 Cache Trace 文件清理
+
+**脚本**：`/etc/cron.daily/openclaw-cache-trace-cleanup`
+
+| 配置项 | 值 |
+|--------|---|
+| 保留时间 | 12 小时 |
+| 轮转阈值 | 500 MB |
+
+### 7.2 数据库清理
+
+**脚本**：`/etc/cron.daily/openclaw-monitor-db-cleanup`
+
+| 表 | 清理策略 |
+|---|---------|
+| runs | 保留 30 天 |
+| ws_messages | 保留最近 1000 条已确认消息 |
+| VACUUM | 每次清理后执行 |
+
+---
+
+## 八、容错设计
 
 | 场景 | 处理方式 |
 |------|----------|
@@ -198,17 +230,18 @@ CREATE TABLE operations (
 
 ---
 
-## 八、性能优化
+## 九、性能优化
 
 | 优化点 | 方案 |
 |--------|------|
 | 文件解析 | 增量解析，只解析新增部分 |
-| 数据库查询 | 索引优化（run_id, session_id, timestamp） |
+| 数据库查询 | 索引优化（run_id, session_id, started_at） |
+| 数据存储 | 仅存储聚合数据，不存储原始 cache_traces |
 | WebSocket 推送 | 批量推送，节流控制 |
 
 ---
 
-## 九、安全设计
+## 十、安全设计
 
 | 安全点 | 方案 |
 |--------|------|
@@ -219,7 +252,7 @@ CREATE TABLE operations (
 
 ---
 
-## 十、技术栈
+## 十一、技术栈
 
 | 组件 | 技术 |
 |------|------|
