@@ -1,67 +1,24 @@
 <template>
   <div class="message-detail">
-    <div class="message-list">
-      <div v-for="message in messages" :key="message.id" class="message">
-        <div class="message-header">
-          <span class="role" :class="message.role">
-            {{ getRoleLabel(message.role) }}
-          </span>
-          <span class="time">{{ formatTime(message.timestamp) }}</span>
-        </div>
-        
-        <div class="message-content">
-          <div v-if="message.content" v-for="(item, idx) in message.content" :key="idx">
-            <div v-if="item.type === 'text'" class="text-content">{{ item.text }}</div>
-            <div v-else-if="item.type === 'thinking'" class="thinking-content">
-              <details>
-                <summary>思考过程</summary>
-                <pre>{{ item.thinking }}</pre>
-              </details>
-            </div>
-            <div v-else-if="item.type === 'toolCall'" class="tool-call">
-              <strong>{{ item.toolCall.name }}</strong>
-              <pre>{{ JSON.stringify(item.toolCall.arguments, null, 2) }}</pre>
-            </div>
+    <div class="message-header">
+      <h3>{{ chatTitle }}</h3>
+      <span class="session-info">{{ chatId }}</span>
+    </div>
+    
+    <div class="message-list" ref="messageList">
+      <div v-if="loading" class="loading">加载中...</div>
+      <div v-else-if="messages.length === 0" class="empty">暂无消息</div>
+      <div v-else>
+        <div v-for="(message, index) in messages" :key="message.id || index" class="message" :class="message.role">
+          <div class="message-header">
+            <span class="role" :class="message.role">
+              {{ getRoleLabel(message.role) }}
+            </span>
+            <span class="time">{{ formatTime(message.timestamp) }}</span>
           </div>
-        </div>
-        
-        <!-- 操作追踪 -->
-        <div v-if="message.operations && message.operations.length > 0" class="operations">
-          <h4>操作追踪</h4>
-          <div v-for="op in message.operations" :key="op.id" class="operation">
-            <div class="op-header">
-              <span class="op-type" :class="op.type">{{ getOpTypeLabel(op.type) }}</span>
-              <span class="op-name">{{ op.name }}</span>
-              <span class="op-status" :class="op.status">{{ getStatusLabel(op.status) }}</span>
-              <span class="op-duration">{{ op.durationMs }}ms</span>
-            </div>
-            <div class="op-content">
-              <div v-if="op.input" class="op-input">
-                <strong>输入:</strong>
-                <pre>{{ formatInput(op.input) }}</pre>
-              </div>
-              <div v-if="op.output" class="op-output">
-                <strong>输出:</strong>
-                <pre>{{ formatOutput(op.output) }}</pre>
-              </div>
-            </div>
-          </div>
-        </div>
-        
-        <!-- LLM 详情 -->
-        <div v-if="message.llmDetails" class="llm-details">
-          <h4>LLM 调用详情</h4>
-          <div class="llm-section">
-            <strong>请求 Prompt:</strong>
-            <pre>{{ JSON.stringify(message.llmDetails.requestPrompt, null, 2) }}</pre>
-          </div>
-          <div class="llm-section">
-            <strong>响应内容:</strong>
-            <pre>{{ JSON.stringify(message.llmDetails.responseContent, null, 2) }}</pre>
-          </div>
-          <div class="llm-meta">
-            <span>耗时: {{ message.llmDetails.durationMs }}ms</span>
-            <span>流式: {{ message.llmDetails.isStreaming ? '是' : '否' }}</span>
+          
+          <div class="message-content">
+            <div v-if="message.content" class="text-content" v-html="formatContent(message.content)"></div>
           </div>
         </div>
       </div>
@@ -70,31 +27,52 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, computed, onMounted, watch } from 'vue';
 import { fetchMessages } from '../services/api';
 
 interface Message {
   id: string;
   role: 'user' | 'assistant' | 'toolResult';
-  content: any[];
+  content: any;
   timestamp: number;
-  operations?: any[];
-  llmDetails?: any;
-  usage?: any;
 }
 
 const props = defineProps<{
   chatId: string;
+  sessionFile?: string;
 }>();
 
 const messages = ref<Message[]>([]);
+const loading = ref(false);
+const messageList = ref<HTMLElement | null>(null);
+
+const chatTitle = computed(() => {
+  if (!props.chatId) return '';
+  const parts = props.chatId.split(':');
+  if (parts.length >= 2) {
+    return `${parts[0]} - ${parts[1].substring(0, 8)}...`;
+  }
+  return props.chatId;
+});
 
 async function loadMessages() {
+  if (!props.chatId) return;
+  
+  loading.value = true;
   try {
     const data = await fetchMessages(props.chatId);
     messages.value = data.messages || [];
+    
+    // 滚动到底部
+    setTimeout(() => {
+      if (messageList.value) {
+        messageList.value.scrollTop = messageList.value.scrollHeight;
+      }
+    }, 100);
   } catch (error) {
     console.error('Failed to load messages:', error);
+  } finally {
+    loading.value = false;
   }
 }
 
@@ -107,33 +85,42 @@ function getRoleLabel(role: string) {
   return labels[role] || role;
 }
 
-function getOpTypeLabel(type: string) {
-  return type === 'tool' ? '🔧 工具' : '🤖 LLM';
-}
-
-function getStatusLabel(status: string) {
-  const labels: Record<string, string> = {
-    pending: '⏳ 等待',
-    running: '🔄 执行中',
-    completed: '✅ 完成',
-    failed: '❌ 失败'
-  };
-  return labels[status] || status;
-}
-
 function formatTime(timestamp: number) {
-  return new Date(timestamp).toLocaleString();
+  if (!timestamp) return '';
+  return new Date(timestamp).toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
 }
 
-function formatInput(input: any) {
-  if (typeof input === 'string') return input;
-  return JSON.stringify(input, null, 2);
+function formatContent(content: any): string {
+  if (typeof content === 'string') {
+    return escapeHtml(content).replace(/\n/g, '<br>');
+  }
+  
+  if (Array.isArray(content)) {
+    return content.map(item => {
+      if (item.type === 'text') {
+        return escapeHtml(item.text || '').replace(/\n/g, '<br>');
+      }
+      return `[${item.type}]`;
+    }).join('');
+  }
+  
+  return escapeHtml(JSON.stringify(content, null, 2));
 }
 
-function formatOutput(output: any) {
-  if (typeof output === 'string') return output;
-  return JSON.stringify(output, null, 2);
+function escapeHtml(text: string): string {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
 }
+
+watch(() => props.chatId, () => {
+  loadMessages();
+});
 
 onMounted(() => {
   loadMessages();
@@ -142,168 +129,82 @@ onMounted(() => {
 
 <style scoped>
 .message-detail {
-  padding: 20px;
-}
-
-.message-list {
-  max-height: 70vh;
-  overflow-y: auto;
-  /* 优化滚动性能 */
-  will-change: transform;
-  -webkit-overflow-scrolling: touch;
-}
-
-.message {
-  margin-bottom: 24px;
-  padding: 16px;
-  border: 1px solid #eee;
-  border-radius: 8px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 .message-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid #e0e0e0;
+  background: #fff;
+}
+
+.message-header h3 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0 0 4px 0;
+}
+
+.session-info {
+  font-size: 12px;
+  color: #999;
+}
+
+.message-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  background: #fafafa;
+}
+
+.loading, .empty {
+  text-align: center;
+  padding: 24px;
+  color: #999;
+}
+
+.message {
+  margin-bottom: 16px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+}
+
+.message.user {
+  background: #e3f2fd;
+}
+
+.message.assistant {
+  background: #f3e5f5;
+}
+
+.message .message-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
+  padding: 0;
+  border: none;
+  background: transparent;
 }
 
 .role {
-  padding: 4px 8px;
-  border-radius: 4px;
-  font-weight: bold;
-}
-
-.role.user {
-  background: #e3f2fd;
-  color: #1976d2;
-}
-
-.role.assistant {
-  background: #f3e5f5;
-  color: #7b1fa2;
-}
-
-.role.toolResult {
-  background: #fff3e0;
-  color: #f57c00;
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .time {
-  font-size: 12px;
-  color: #666;
+  font-size: 11px;
+  color: #999;
 }
 
 .text-content {
+  font-size: 14px;
+  line-height: 1.6;
+  color: #333;
   white-space: pre-wrap;
-}
-
-.thinking-content details {
-  margin-top: 8px;
-}
-
-.thinking-content summary {
-  cursor: pointer;
-  color: #666;
-}
-
-.thinking-content pre {
-  margin-top: 8px;
-  padding: 8px;
-  background: #f5f5f5;
-  border-radius: 4px;
-  font-size: 12px;
-}
-
-.tool-call {
-  margin-top: 8px;
-  padding: 8px;
-  background: #f5f5f5;
-  border-radius: 4px;
-}
-
-.operations, .llm-details {
-  margin-top: 16px;
-  padding: 16px;
-  background: #fafafa;
-  border-radius: 8px;
-}
-
-.operation {
-  margin-bottom: 12px;
-  padding: 12px;
-  border: 1px solid #eee;
-  border-radius: 4px;
-}
-
-.op-header {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  margin-bottom: 8px;
-}
-
-.op-type {
-  padding: 2px 6px;
-  border-radius: 3px;
-  font-size: 12px;
-}
-
-.op-type.tool {
-  background: #e8f5e9;
-  color: #388e3c;
-}
-
-.op-type.llm {
-  background: #e3f2fd;
-  color: #1976d2;
-}
-
-.op-status {
-  padding: 2px 6px;
-  border-radius: 3px;
-  font-size: 12px;
-}
-
-.op-status.completed {
-  background: #e8f5e9;
-  color: #388e3c;
-}
-
-.op-status.running {
-  background: #fff3e0;
-  color: #f57c00;
-}
-
-.op-status.failed {
-  background: #ffebee;
-  color: #d32f2f;
-}
-
-.op-content pre {
-  margin: 4px 0;
-  padding: 4px;
-  background: #f5f5f5;
-  border-radius: 3px;
-  font-size: 12px;
-}
-
-.llm-section {
-  margin-bottom: 12px;
-}
-
-.llm-section pre {
-  margin-top: 4px;
-  padding: 8px;
-  background: #f5f5f5;
-  border-radius: 4px;
-  max-height: 200px;
-  overflow: auto;
-}
-
-.llm-meta {
-  display: flex;
-  gap: 16px;
-  font-size: 12px;
-  color: #666;
+  word-break: break-word;
 }
 </style>
