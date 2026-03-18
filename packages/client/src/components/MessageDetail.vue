@@ -71,7 +71,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
-import axios from 'axios';
+import { fetchMessages } from '../services/api';
 
 interface Message {
   id: string;
@@ -91,8 +91,8 @@ const messages = ref<Message[]>([]);
 
 async function loadMessages() {
   try {
-    const response = await axios.get(`/api/messages?chat=${props.chatId}`);
-    messages.value = response.data.messages;
+    const data = await fetchMessages(props.chatId);
+    messages.value = data.messages || [];
   } catch (error) {
     console.error('Failed to load messages:', error);
   }
