@@ -6,7 +6,9 @@ import * as db from '../db';
 import * as ws from '../ws';
 import * as watcher from '../watcher';
 import type { Run } from '../types';
+import type { MonitorConfig } from '../types';
 import path from 'path';
+import { createExtendedRoutes } from './extended';
 
 // ==================== ✅ 安全配置 ====================
 
@@ -405,6 +407,21 @@ export function createApp() {
   });
   
   app.route('/api', api);
+  
+  // ✅ 挂载扩展路由（channels, chats, stats）
+  const extendedConfig: MonitorConfig = {
+    openclawDir: OPENCLAW_DIR,
+    cacheTracePath: process.env.CACHE_TRACE_PATH || path.join(process.env.HOME || '/root', '.openclaw/logs/cache-trace.jsonl'),
+    dbPath: process.env.DB_PATH || '/var/lib/openclaw-monitor/monitor.db',
+    port: parseInt(process.env.PORT || '3000'),
+    recentLimit: parseInt(process.env.RECENT_LIMIT || '100'),
+    cleanupInterval: parseInt(process.env.CLEANUP_INTERVAL || '3600000'),
+    cacheTracesDaysToKeep: parseInt(process.env.CACHE_TRACES_DAYS || '7'),
+    runsDaysToKeep: parseInt(process.env.RUNS_DAYS || '30'),
+  };
+  const extendedRoutes = createExtendedRoutes(extendedConfig);
+  app.route('/api', extendedRoutes);
+  
   app.get('/ws', upgradeWebSocket(() => ws.createWSHandler()));
   
   return { app, injectWebSocket, runCache };

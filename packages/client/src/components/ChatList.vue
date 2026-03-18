@@ -28,7 +28,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue';
-import axios from 'axios';
+import api, { fetchChannels, fetchChats as fetchChatsApi } from '../services/api';
 import { debounce } from '../utils/performance';
 
 interface Channel {
@@ -61,8 +61,8 @@ const filteredChats = computed(() => {
 
 async function loadChannels() {
   try {
-    const response = await axios.get('/api/channels');
-    channels.value = response.data.channels;
+    const data = await fetchChannels();
+    channels.value = data.channels || [];
     if (channels.value.length > 0) {
       selectedChannel.value = channels.value[0].id;
       loadChats();
@@ -76,8 +76,8 @@ async function loadChats() {
   if (!selectedChannel.value) return;
   
   try {
-    const response = await axios.get(`/api/chats?channel=${selectedChannel.value}`);
-    chats.value = response.data.chats;
+    const data = await fetchChatsApi(selectedChannel.value);
+    chats.value = data.chats || [];
   } catch (error) {
     console.error('Failed to load chats:', error);
   }

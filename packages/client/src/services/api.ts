@@ -1,6 +1,8 @@
 import axios from 'axios';
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:3000';
+// 使用相对路径，通过 vite proxy 转发（本地开发）或直接请求（生产环境）
+// 如果需要直连后端，设置 VITE_API_BASE 环境变量
+const API_BASE = import.meta.env.VITE_API_BASE || '';
 const API_TOKEN = import.meta.env.VITE_API_TOKEN;
 
 const api = axios.create({

@@ -180,22 +180,25 @@ export async function scanChannelSessions(
           const content = fs.readFileSync(filePath, 'utf-8');
           const meta = JSON.parse(content);
           
+          // 从文件名推断 sessionKey（格式：session-{account}.json）
+          const accountFromFileName = path.basename(file, '.json').replace('session-', '');
+          const inferredSessionKey = meta.sessionKey || 
+            `agent:${accountId}-${channelId}:${channelId}:direct:${meta.sessionId || accountFromFileName}`;
+          
           // 创建 Chat 对象
           const chat: Chat = {
-            id: extractChatId(meta.sessionKey || file),
+            id: extractChatId(inferredSessionKey),
             channelId,
             accountId: meta.accountId || accountId,
-            sessionKey: meta.sessionKey || '',
-            title: meta.title || path.basename(file, '.json'),
-            lastMessageAt: meta.lastConnectedAt,
+            sessionKey: inferredSessionKey,
+            title: meta.title || `${channelId} - ${meta.accountId || accountFromFileName}`,
+            lastMessageAt: meta.lastConnectedAt || meta.savedAt,
             messageCount: 0,
             runCount: 0,
             sessionFile: filePath,
           };
           
-          if (chat.sessionKey) {
-            chats.push(chat);
-          }
+          chats.push(chat);
         } catch (e) {
           // 忽略解析错误
         }

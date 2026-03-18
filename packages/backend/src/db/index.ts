@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
 import type { Run, DBCacheTrace, DBRun, MonitorConfig } from '../types';
+import { initExtendedTables } from './extended';
 
 let db: Database.Database | null = null;
 
@@ -93,6 +94,9 @@ export function initDB(dbPath: string): Database.Database {
       updated_at INTEGER NOT NULL
     );
   `);
+  
+  // 初始化扩展表（channels, chats, operations）
+  initExtendedTables(db);
   
   return db;
 }
