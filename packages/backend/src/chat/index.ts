@@ -26,6 +26,7 @@ export async function parseSessionFile(
     let lastMessageAt = 0;
     let sessionKey = '';
     let title = '';
+    let sessionId = '';
     
     const fileStream = fs.createReadStream(filePath, { encoding: 'utf-8' });
     const rl = readline.createInterface({
@@ -45,26 +46,73 @@ export async function parseSessionFile(
           title = extractTitle(msg.sessionKey);
         }
         
+        // ✅ 飞书格式：从 session 类型的消息中提取 sessionId
+        if (!sessionId && msg.type === 'session' && msg.id) {
+          sessionId = msg.id;
+        }
+        
+        // ✅ 飞书格式：从 message 类型的消息中提取 sessionKey
+        if (!sessionKey && msg.type === 'message' && msg.message?.content) {
+          const content = msg.message.content;
+          if (Array.isArray(content)) {
+            for (const item of content) {
+              if (item.type === 'text' && item.text) {
+                // 从文本中提取 sessionKey（格式：agent:mime-feishu:feishu:direct:xxx）
+                const match = item.text.match(/sessionKey[：:\s]*([a-zA-Z0-9:_-]+)/);
+                if (match) {
+                  sessionKey = match[1];
+                  title = extractTitle(sessionKey);
+                }
+              }
+            }
+          }
+        }
+        
         // 提取时间戳
         const timestamp = msg.timestamp ? new Date(msg.timestamp).getTime() : Date.now();
         if (timestamp > lastMessageAt) {
           lastMessageAt = timestamp;
         }
         
-        // 提取消息
-        messages.push({
-          id: msg.id || `${timestamp}-${messages.length}`,
-          runId: msg.runId || '',
-          role: msg.role || 'user',
-          content: parseContent(msg.content || msg.message),
-          timestamp,
-        });
+        // 提取消息（支持多种格式）
+        if (msg.type === 'message' && msg.message) {
+          // 飞书格式：{type: "message", message: {role, content}}
+          messages.push({
+            id: msg.id || `${timestamp}-${messages.length}`,
+            runId: msg.runId || '',
+            role: msg.message.role || 'user',
+            content: msg.message.content || [],
+            timestamp,
+          });
+        } else if (msg.role) {
+          // 标准格式：{role, content}
+          messages.push({
+            id: msg.id || `${timestamp}-${messages.length}`,
+            runId: msg.runId || '',
+            role: msg.role,
+            content: parseContent(msg.content || msg.message),
+            timestamp,
+          });
+        }
       } catch (e) {
         // 忽略解析错误
       }
     }
     
+    // ✅ 如果没有 sessionKey，从文件名推断
+    if (!sessionKey && sessionId) {
+      sessionKey = `agent:${accountId}:${channelId}:direct:${sessionId}`;
+      title = `${channelId} - ${sessionId.substring(0, 8)}`;
+    }
+    
+    // ✅ 如果 sessionKey 只是 "params"，重新构造
+    if (sessionKey === 'params' && sessionId) {
+      sessionKey = `agent:${accountId}:${channelId}:direct:${sessionId}`;
+      title = `${channelId} - ${sessionId.substring(0, 8)}`;
+    }
+    
     if (!sessionKey) {
+      console.log(`[Chat] No sessionKey found in ${filePath}`);
       return null;
     }
     
@@ -152,6 +200,9 @@ export async function scanChannelSessions(
   // 全局 session 目录
   const globalSessionDir = path.join(openclawDir, 'sessions');
   
+  // ✅ 新增：agents 目录
+  const agentsDir = path.join(openclawDir, 'agents');
+  
   // 扫描全局 session 文件
   if (fs.existsSync(globalSessionDir)) {
     const files = fs.readdirSync(globalSessionDir)
@@ -214,6 +265,45 @@ export async function scanChannelSessions(
   
   console.log(`[Chat] Scanned ${chats.length} chats for channel ${channelId}`);
   
+  // ✅ 新增：扫描 agents 目录
+  if (fs.existsSync(agentsDir)) {
+    console.log(`[Chat] Scanning agents directory: ${agentsDir}`);
+    const agentDirs = fs.readdirSync(agentsDir, { withFileTypes: true })
+      .filter(d => d.isDirectory())
+      .map(d => d.name);
+    
+    console.log(`[Chat] Found agents: ${agentDirs.join(', ')}`);
+    
+    for (const agentName of agentDirs) {
+      // 检查 agent 名称是否匹配当前渠道
+      // agent 目录名称格式：{accountId}-{channelId} 或 mime-{channelId}
+      const matches = agentName.includes(channelId);
+      console.log(`[Chat] Agent ${agentName} matches ${channelId}: ${matches}`);
+      
+      if (matches) {
+        const agentSessionDir = path.join(agentsDir, agentName, 'sessions');
+        console.log(`[Chat] Scanning agent session dir: ${agentSessionDir}`);
+        
+        if (fs.existsSync(agentSessionDir)) {
+          const files = fs.readdirSync(agentSessionDir)
+            .filter(f => f.endsWith('.jsonl'));
+          
+          console.log(`[Chat] Found ${files.length} jsonl files in ${agentSessionDir}`);
+          
+          for (const file of files) {
+            const filePath = path.join(agentSessionDir, file);
+            const chat = await parseSessionFile(filePath, channelId, agentName);
+            if (chat) {
+              chats.push(chat);
+            }
+          }
+        }
+      }
+    }
+  } else {
+    console.log(`[Chat] Agents directory not found: ${agentsDir}`);
+  }
+  
   return chats;
 }
 
@@ -227,9 +317,28 @@ export async function scanAllSessions(
   const allChats: Chat[] = [];
   
   for (const channel of channels) {
-    for (const account of channel.accounts) {
-      const chats = await scanChannelSessions(openclawDir, channel.id, account.id);
-      allChats.push(...chats);
+    // 如果有 accounts，扫描每个 account
+    if (channel.accounts && channel.accounts.length > 0) {
+      for (const account of channel.accounts) {
+        const chats = await scanChannelSessions(openclawDir, channel.id, account.id);
+        allChats.push(...chats);
+      }
+    } else {
+      // ✅ 如果没有 accounts，从 agents 目录推断
+      const agentsDir = path.join(openclawDir, 'agents');
+      if (fs.existsSync(agentsDir)) {
+        const agentDirs = fs.readdirSync(agentsDir, { withFileTypes: true })
+          .filter(d => d.isDirectory())
+          .map(d => d.name);
+        
+        // 找到匹配当前渠道的 agent
+        for (const agentName of agentDirs) {
+          if (agentName.includes(channel.id)) {
+            const chats = await scanChannelSessions(openclawDir, channel.id, agentName);
+            allChats.push(...chats);
+          }
+        }
+      }
     }
   }
   
