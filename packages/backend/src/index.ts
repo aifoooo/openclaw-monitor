@@ -81,43 +81,38 @@ function stopDatabaseCleanup(): void {
   }
 }
 
-// ✅ 增量初始化
+// ✅ 立即启动文件监听（不等待初始化）
+startWatcher(config.cacheTracePath, {
+  onNewRun: (run: Run) => {
+    console.log(`[Monitor] New run: ${run.id}`);
+    runCache.addRun(run);
+    broadcast('run:started', run);
+  },
+  onRunUpdate: (run: Run) => {
+    console.log(`[Monitor] Run updated: ${run.id}`);
+    runCache.addRun(run);
+    broadcast('run:completed', run);
+  },
+});
+
+// ✅ 立即启动消息文件监听
+startMessageWatcher(config.sessionsPath, {
+  onNewMessage: (data) => {
+    console.log(`[Monitor] New message: ${data.type}`);
+    broadcast('chat:updated' as any, data as any);
+  },
+});
+
+const status = getWatcherStatus();
+console.log(`[Monitor] Watching: ${config.cacheTracePath}, position: ${status.lastPosition}`);
+
+// 启动数据库清理
+startDatabaseCleanup();
+
+// ✅ 后台增量初始化（不阻塞服务启动）
 initializeIncremental(config.cacheTracePath, { recentLimit: config.recentLimit })
   .then((result) => {
     console.log(`[Monitor] Incremental init completed: ${result.runsProcessed} runs, from cache: ${result.fromCache}`);
-    
-    // 启动文件监听
-    startWatcher(config.cacheTracePath, {
-      onNewRun: (run: Run) => {
-        console.log(`[Monitor] New run: ${run.id}`);
-        // 更新缓存
-        runCache.addRun(run);
-        // 广播
-        broadcast('run:started', run);
-      },
-      onRunUpdate: (run: Run) => {
-        console.log(`[Monitor] Run updated: ${run.id}`);
-        // 更新缓存
-        runCache.addRun(run);
-        // 广播
-        broadcast('run:completed', run);
-      },
-    });
-    
-    const status = getWatcherStatus();
-    console.log(`[Monitor] Watching: ${config.cacheTracePath}, position: ${status.lastPosition}`);
-    
-    // ✅ 启动消息文件监听
-    startMessageWatcher(config.sessionsPath, {
-      onNewMessage: (data) => {
-        console.log(`[Monitor] New message: ${data.type}`);
-        // 广播消息更新
-        broadcast('chat:updated' as any, data as any);
-      },
-    });
-    
-    // 启动数据库清理
-    startDatabaseCleanup();
     
     // 打印初始统计
     const stats = getStats();
@@ -125,18 +120,6 @@ initializeIncremental(config.cacheTracePath, { recentLimit: config.recentLimit }
   })
   .catch(e => {
     console.error('[Monitor] Initialization failed:', e);
-    // 即使初始化失败，也尝试启动 watcher
-    startWatcher(config.cacheTracePath, {
-      onNewRun: (run: Run) => {
-        runCache.addRun(run);
-        broadcast('run:started', run);
-      },
-      onRunUpdate: (run: Run) => {
-        runCache.addRun(run);
-        broadcast('run:completed', run);
-      },
-    });
-    startDatabaseCleanup();
   });
 
 // 优雅关闭
