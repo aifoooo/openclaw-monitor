@@ -105,15 +105,17 @@ function formatTime(timestamp: number) {
 
 function formatContent(content: any): string {
   if (typeof content === 'string') {
-    // 处理特殊标签（在 Markdown 渲染之前）
-    let text = content
-      .replace(/<qqfile>([^<]+)<\/qqfile>/g, '\n\n📎 **文件**: `$1`\n\n')
-      .replace(/<qqimg>([^<]+)<\/qqimg>/g, '\n\n🖼️ **图片**: `$1`\n\n')
-      .replace(/<qqvoice>([^<]+)<\/qqvoice>/g, '\n\n🔊 **语音**: `$1`\n\n')
-      .replace(/<qqvideo>([^<]+)<\/qqvideo>/g, '\n\n🎬 **视频**: `$1`\n\n');
+    // 先渲染 Markdown
+    let html = md.render(content);
     
-    // 渲染 Markdown
-    return md.render(text);
+    // 渲染后处理被转义的特殊标签
+    html = html
+      .replace(/&lt;qqfile&gt;([^&]+)&lt;\/qqfile&gt;/g, '<span class="tag file">📎 文件: $1</span>')
+      .replace(/&lt;qqimg&gt;([^&]+)&lt;\/qqimg&gt;/g, '<span class="tag image">🖼️ 图片: $1</span>')
+      .replace(/&lt;qqvoice&gt;([^&]+)&lt;\/qqvoice&gt;/g, '<span class="tag voice">🔊 语音: $1</span>')
+      .replace(/&lt;qqvideo&gt;([^&]+)&lt;\/qqvideo&gt;/g, '<span class="tag video">🎬 视频: $1</span>');
+    
+    return html;
   }
   
   if (Array.isArray(content)) {

@@ -63,13 +63,28 @@ export async function fetchHiddenCount() {
 }
 
 // WebSocket 连接
-export function createWebSocket(): WebSocket | null {
-  const wsUrl = API_BASE.replace(/^http/, 'ws') + '/ws';
+export function createWebSocket(onMessage?: (data: any) => void): WebSocket | null {
+  const protocol = typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const host = typeof window !== 'undefined' ? window.location.host : 'localhost:3000';
+  const wsUrl = `${protocol}//${host}/ws`;
   
   // 如果有 Token，添加到 URL
   const url = API_TOKEN ? `${wsUrl}?token=${API_TOKEN}` : wsUrl;
   
-  return new WebSocket(url);
+  const ws = new WebSocket(url);
+  
+  if (onMessage) {
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        onMessage(data);
+      } catch (e) {
+        console.error('Failed to parse WebSocket message:', e);
+      }
+    };
+  }
+  
+  return ws;
 }
 
 export default api;

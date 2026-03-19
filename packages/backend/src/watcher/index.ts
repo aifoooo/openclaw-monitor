@@ -4,6 +4,92 @@ import type { CacheTraceEntry, Run, DBCacheTrace } from '../types';
 import { convertToRun, parseRecentEntries, parseCacheTraceIncremental } from '../parser';
 import * as db from '../db';
 
+// ==================== ✅ 消息文件监听 ====================
+
+let messageWatcher: chokidar.FSWatcher | null = null;
+let onNewMessage: ((message: any) => void) | null = null;
+
+/**
+ * 启动消息文件监听
+ */
+export function startMessageWatcher(
+  sessionsDir: string,
+  options: {
+    onNewMessage?: (message: any) => void;
+  } = {}
+): chokidar.FSWatcher | null {
+  if (messageWatcher) {
+    console.warn('[MessageWatcher] Already running, stopping old watcher');
+    stopMessageWatcher();
+  }
+  
+  if (!fs.existsSync(sessionsDir)) {
+    console.warn(`[MessageWatcher] Sessions directory not found: ${sessionsDir}`);
+    return null;
+  }
+  
+  onNewMessage = options.onNewMessage || null;
+  
+  messageWatcher = chokidar.watch(`${sessionsDir}/*.jsonl`, {
+    persistent: true,
+    ignoreInitial: true,
+    awaitWriteFinish: {
+      stabilityThreshold: 100,
+      pollInterval: 50,
+    },
+  });
+  
+  messageWatcher.on('add', (filePath: string) => {
+    console.log(`[MessageWatcher] New file: ${filePath}`);
+    // 新文件，通知前端刷新
+    if (onNewMessage) {
+      onNewMessage({ type: 'file_added', path: filePath });
+    }
+  });
+  
+  messageWatcher.on('change', async (filePath: string) => {
+    console.log(`[MessageWatcher] File changed: ${filePath}`);
+    try {
+      // 读取最新的一行
+      const content = await fs.promises.readFile(filePath, 'utf-8');
+      const lines = content.trim().split('\n');
+      const lastLine = lines[lines.length - 1];
+      
+      if (lastLine) {
+        const msg = JSON.parse(lastLine);
+        if (onNewMessage) {
+          onNewMessage({
+            type: 'new_message',
+            file: filePath,
+            message: msg,
+          });
+        }
+      }
+    } catch (e) {
+      console.error(`[MessageWatcher] Error parsing message:`, e);
+    }
+  });
+  
+  messageWatcher.on('error', (error: Error) => {
+    console.error(`[MessageWatcher] Error:`, error);
+  });
+  
+  console.log(`[MessageWatcher] Started watching: ${sessionsDir}`);
+  
+  return messageWatcher;
+}
+
+/**
+ * 停止消息文件监听
+ */
+export function stopMessageWatcher(): void {
+  if (messageWatcher) {
+    messageWatcher.close();
+    messageWatcher = null;
+  }
+  onNewMessage = null;
+}
+
 // ==================== ✅ 性能优化：O(1) LRU 缓存 ====================
 
 /**

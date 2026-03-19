@@ -1,7 +1,7 @@
 import { serve } from '@hono/node-server';
 import { createApp } from './routes';
 import { initDB, closeDB, cleanupOldCacheTraces, cleanupOldRuns, vacuumDatabase, getStats } from './db';
-import { startWatcher, stopWatcher, initializeIncremental, getWatcherStatus } from './watcher';
+import { startWatcher, stopWatcher, initializeIncremental, getWatcherStatus, startMessageWatcher, stopMessageWatcher } from './watcher';
 import { broadcast, startPeriodicCleanup, stopPeriodicCleanup, getConnectionCount } from './ws';
 import type { Run } from './types';
 import path from 'path';
@@ -11,6 +11,7 @@ import fs from 'fs';
 const config = {
   openclawDir: process.env.OPENCLAW_DIR || '/root/.openclaw',
   cacheTracePath: process.env.CACHE_TRACE_PATH || path.join(process.env.HOME || '/root', '.openclaw/logs/cache-trace.jsonl'),
+  sessionsPath: process.env.SESSIONS_PATH || path.join(process.env.HOME || '/root', '.openclaw/sessions'),
   dbPath: process.env.DB_PATH || '/var/lib/openclaw-monitor/monitor.db',
   port: parseInt(process.env.PORT || '3000'),
   recentLimit: parseInt(process.env.RECENT_LIMIT || '100'),
@@ -106,6 +107,15 @@ initializeIncremental(config.cacheTracePath, { recentLimit: config.recentLimit }
     const status = getWatcherStatus();
     console.log(`[Monitor] Watching: ${config.cacheTracePath}, position: ${status.lastPosition}`);
     
+    // ✅ 启动消息文件监听
+    startMessageWatcher(config.sessionsPath, {
+      onNewMessage: (data) => {
+        console.log(`[Monitor] New message: ${data.type}`);
+        // 广播消息更新
+        broadcast('chat:updated' as any, data as any);
+      },
+    });
+    
     // 启动数据库清理
     startDatabaseCleanup();
     
@@ -140,6 +150,7 @@ async function shutdown(signal: string) {
   
   // 2. 停止文件监听
   stopWatcher();
+  stopMessageWatcher();
   console.log('[Monitor] Watcher stopped');
   
   // 3. 停止定期清理

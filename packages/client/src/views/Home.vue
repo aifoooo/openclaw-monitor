@@ -56,7 +56,7 @@
 import { ref, onMounted, onUnmounted } from 'vue';
 import ChatList from '../components/ChatList.vue';
 import MessageDetail from '../components/MessageDetail.vue';
-import { fetchChannels, fetchHiddenChats, fetchHiddenCount, unhideChat as unhideChatApi } from '../services/api';
+import { fetchChannels, fetchHiddenChats, fetchHiddenCount, unhideChat as unhideChatApi, createWebSocket } from '../services/api';
 
 const channels = ref<any[]>([]);
 const selectedChannel = ref('');
@@ -65,6 +65,7 @@ const connected = ref(false);
 const showHidden = ref(false);
 const hiddenChats = ref<any[]>([]);
 const hiddenCount = ref(0);
+let ws: WebSocket | null = null;
 
 async function loadChannels() {
   try {
@@ -127,14 +128,60 @@ async function unhideChat(chat: any) {
   }
 }
 
+function handleWebSocketMessage(data: any) {
+  console.log('[WS] Received:', data);
+  
+  if (data.type === 'chat:updated') {
+    // 刷新当前聊天列表
+    if (selectedChat.value) {
+      // 触发 MessageDetail 重新加载
+      // 通过改变 selectedChat 引用来触发更新
+      const temp = selectedChat.value;
+      selectedChat.value = null;
+      setTimeout(() => {
+        selectedChat.value = temp;
+      }, 100);
+    }
+  }
+}
+
+function connectWebSocket() {
+  ws = createWebSocket(handleWebSocketMessage);
+  
+  if (ws) {
+    ws.onopen = () => {
+      console.log('[WS] Connected');
+      connected.value = true;
+    };
+    
+    ws.onclose = () => {
+      console.log('[WS] Disconnected');
+      connected.value = false;
+      // 5秒后重连
+      setTimeout(() => {
+        if (!ws || ws.readyState === WebSocket.CLOSED) {
+          connectWebSocket();
+        }
+      }, 5000);
+    };
+    
+    ws.onerror = (error) => {
+      console.error('[WS] Error:', error);
+    };
+  }
+}
+
 onMounted(() => {
   loadChannels();
   loadHiddenCount();
-  connected.value = true;
+  connectWebSocket();
 });
 
 onUnmounted(() => {
-  // 清理
+  if (ws) {
+    ws.close();
+    ws = null;
+  }
 });
 </script>
 
