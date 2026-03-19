@@ -221,6 +221,9 @@ onUnmounted(() => {
 .count {
   font-size: 12px;
   color: #999;
+  background: #f0f0f0;
+  padding: 2px 8px;
+  border-radius: 10px;
 }
 
 .search {
@@ -229,16 +232,19 @@ onUnmounted(() => {
 
 .search input {
   width: 100%;
-  padding: 8px 12px;
+  padding: 10px 14px;
   border: 1px solid #e0e0e0;
-  border-radius: 6px;
+  border-radius: 10px;
   font-size: 14px;
-  transition: border-color 0.2s;
+  transition: all 0.2s;
+  background: #fafafa;
 }
 
 .search input:focus {
   outline: none;
   border-color: #1976d2;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(25, 118, 210, 0.1);
 }
 
 .chat-items {
@@ -255,19 +261,22 @@ onUnmounted(() => {
 }
 
 .chat-item {
-  padding: 12px;
-  border-radius: 8px;
+  padding: 14px 16px;
+  border-radius: 10px;
   margin-bottom: 8px;
   cursor: pointer;
-  transition: background-color 0.2s;
+  transition: all 0.2s;
+  border: 1px solid transparent;
 }
 
 .chat-item:hover {
-  background-color: #f5f5f5;
+  background-color: #f5f7fa;
+  border-color: #e8e8e8;
 }
 
 .chat-item.active {
-  background-color: #e3f2fd;
+  background-color: #e8f4fd;
+  border-color: #1976d2;
 }
 
 .chat-title {
@@ -286,10 +295,11 @@ onUnmounted(() => {
 }
 
 .channel {
-  background: #f0f0f0;
-  padding: 2px 6px;
-  border-radius: 4px;
+  background: #f0f2f5;
+  padding: 3px 8px;
+  border-radius: 6px;
   font-size: 11px;
+  font-weight: 500;
 }
 
 /* 右键菜单 */
@@ -297,20 +307,21 @@ onUnmounted(() => {
   position: fixed;
   background: #fff;
   border: 1px solid #e0e0e0;
-  border-radius: 6px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  border-radius: 10px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   z-index: 1000;
-  min-width: 140px;
+  min-width: 150px;
+  overflow: hidden;
 }
 
 .context-menu-item {
-  padding: 10px 16px;
+  padding: 12px 16px;
   cursor: pointer;
   font-size: 14px;
   transition: background-color 0.2s;
 }
 
 .context-menu-item:hover {
-  background-color: #f5f5f5;
+  background-color: #f5f7fa;
 }
 </style>

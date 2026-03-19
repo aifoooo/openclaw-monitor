@@ -143,7 +143,9 @@ onUnmounted(() => {
   height: 100vh;
   display: flex;
   flex-direction: column;
-  background: #fafafa;
+  background: #f0f2f5;
+  padding: 12px;
+  gap: 12px;
 }
 
 .header {
@@ -152,7 +154,8 @@ onUnmounted(() => {
   align-items: center;
   padding: 16px 24px;
   background: #fff;
-  border-bottom: 1px solid #e0e0e0;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
 
 .header h1 {
@@ -168,12 +171,16 @@ onUnmounted(() => {
 }
 
 .channel-select, .hidden-select {
-  padding: 8px 12px;
+  padding: 8px 32px 8px 12px;
   border: 1px solid #e0e0e0;
-  border-radius: 6px;
+  border-radius: 8px;
   font-size: 14px;
   background: #fff;
   cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23666' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
 }
 
 .channel-select:focus, .hidden-select:focus {
@@ -182,9 +189,10 @@ onUnmounted(() => {
 }
 
 .status {
-  padding: 4px 12px;
-  border-radius: 12px;
+  padding: 6px 14px;
+  border-radius: 16px;
   font-size: 12px;
+  font-weight: 500;
 }
 
 .status.connected {
@@ -201,18 +209,22 @@ onUnmounted(() => {
   display: flex;
   flex: 1;
   overflow: hidden;
+  gap: 12px;
 }
 
 .sidebar {
   width: 320px;
   background: #fff;
-  border-right: 1px solid #e0e0e0;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  overflow: hidden;
 }
 
 .hidden-sidebar {
   width: 280px;
-  background: #fafafa;
-  border-right: 1px solid #e0e0e0;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
   display: flex;
   flex-direction: column;
 }
@@ -222,7 +234,7 @@ onUnmounted(() => {
   justify-content: space-between;
   align-items: center;
   padding: 16px;
-  border-bottom: 1px solid #e0e0e0;
+  border-bottom: 1px solid #f0f0f0;
 }
 
 .hidden-header h3 {
@@ -240,6 +252,7 @@ onUnmounted(() => {
   color: #999;
   padding: 0;
   line-height: 1;
+  transition: color 0.2s;
 }
 
 .close-btn:hover {
@@ -257,9 +270,14 @@ onUnmounted(() => {
   justify-content: space-between;
   align-items: center;
   padding: 12px;
-  background: #fff;
-  border-radius: 6px;
+  background: #fafafa;
+  border-radius: 8px;
   margin-bottom: 8px;
+  transition: background-color 0.2s;
+}
+
+.hidden-item:hover {
+  background: #f5f5f5;
 }
 
 .hidden-info {
@@ -283,14 +301,15 @@ onUnmounted(() => {
 }
 
 .unhide-btn {
-  padding: 4px 12px;
+  padding: 6px 14px;
   background: #1976d2;
   color: #fff;
   border: none;
-  border-radius: 4px;
+  border-radius: 6px;
   font-size: 12px;
   cursor: pointer;
   margin-left: 8px;
+  transition: background-color 0.2s;
 }
 
 .unhide-btn:hover {
@@ -301,6 +320,8 @@ onUnmounted(() => {
   flex: 1;
   overflow-y: auto;
   background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
 
 .placeholder {
