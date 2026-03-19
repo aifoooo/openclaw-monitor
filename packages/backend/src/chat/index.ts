@@ -249,8 +249,6 @@ export async function getChatMessages(
   limit: number = 50,
   offset: number = 0
 ): Promise<Message[]> {
-  const messages: Message[] = [];
-  
   // OpenClaw 消息文件目录 - 固定路径
   // sessionFile 格式: /root/.openclaw/qqbot/sessions/session-xxx.json
   // 消息文件目录: /root/.openclaw/sessions/
@@ -272,7 +270,8 @@ export async function getChatMessages(
   
   console.log(`[Chat] Found ${files.length} message files`);
   
-  let index = 0;
+  // 先收集所有消息，再排序
+  const allMessages: Message[] = [];
   
   for (const file of files) {
     const filePath = path.join(sessionsDir, file);
@@ -294,60 +293,48 @@ export async function getChatMessages(
         if (msg.user !== undefined || msg.assistant !== undefined) {
           // 添加用户消息
           if (msg.user) {
-            if (index >= offset && messages.length < limit) {
-              messages.push({
-                id: `${msg.id || timestamp}-user`,
-                runId: '',
-                role: 'user',
-                content: parseContent(msg.user),
-                timestamp,
-              });
-            }
-            index++;
+            allMessages.push({
+              id: `${msg.id || timestamp}-user`,
+              runId: '',
+              role: 'user',
+              content: parseContent(msg.user),
+              timestamp,
+            });
           }
           
           // 添加助手消息
           if (msg.assistant) {
-            if (index >= offset && messages.length < limit) {
-              messages.push({
-                id: `${msg.id || timestamp}-assistant`,
-                runId: '',
-                role: 'assistant',
-                content: parseContent(msg.assistant),
-                timestamp,
-              });
-            }
-            index++;
+            allMessages.push({
+              id: `${msg.id || timestamp}-assistant`,
+              runId: '',
+              role: 'assistant',
+              content: parseContent(msg.assistant),
+              timestamp,
+            });
           }
         }
         // 格式2: {role, content} 标准格式
         else if (msg.role) {
-          if (index >= offset && messages.length < limit) {
-            messages.push({
-              id: msg.id || `${timestamp}-${index}`,
-              runId: msg.runId || '',
-              role: msg.role,
-              content: parseContent(msg.content || msg.message),
-              timestamp,
-            });
-          }
-          index++;
-        }
-        
-        // 达到 limit 条消息后停止
-        if (messages.length >= limit) {
-          break;
+          allMessages.push({
+            id: msg.id || `${timestamp}-${allMessages.length}`,
+            runId: msg.runId || '',
+            role: msg.role,
+            content: parseContent(msg.content || msg.message),
+            timestamp,
+          });
         }
       } catch (e) {
         // 忽略解析错误
       }
     }
-    
-    if (messages.length >= limit) {
-      break;
-    }
   }
   
-  console.log(`[Chat] Loaded ${messages.length} messages`);
-  return messages;
+  // 按时间戳排序（最新的在前面）
+  allMessages.sort((a, b) => b.timestamp - a.timestamp);
+  
+  // 应用分页
+  const pagedMessages = allMessages.slice(offset, offset + limit);
+  
+  console.log(`[Chat] Loaded ${pagedMessages.length} messages (total: ${allMessages.length})`);
+  return pagedMessages;
 }
