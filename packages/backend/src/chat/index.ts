@@ -197,25 +197,12 @@ export async function scanChannelSessions(
   // 渠道特定的 session 目录
   const channelSessionDir = path.join(openclawDir, channelId, 'sessions');
   
-  // 全局 session 目录
-  const globalSessionDir = path.join(openclawDir, 'sessions');
-  
   // ✅ 新增：agents 目录
   const agentsDir = path.join(openclawDir, 'agents');
   
-  // 扫描全局 session 文件
-  if (fs.existsSync(globalSessionDir)) {
-    const files = fs.readdirSync(globalSessionDir)
-      .filter(f => f.endsWith('.jsonl'));
-    
-    for (const file of files) {
-      const filePath = path.join(globalSessionDir, file);
-      const chat = await parseSessionFile(filePath, channelId, accountId);
-      if (chat) {
-        chats.push(chat);
-      }
-    }
-  }
+  // ✅ 不再扫描全局 session 目录，因为那里的消息文件没有 sessionKey
+  // 全局消息文件只是消息记录，不应该独立创建聊天
+  // 元数据文件在渠道目录中，已经有 sessionKey
   
   // 扫描渠道特定的 session 文件
   if (fs.existsSync(channelSessionDir)) {
