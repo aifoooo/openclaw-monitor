@@ -291,7 +291,20 @@ export async function scanChannelSessions(
     console.log(`[Chat] Agents directory not found: ${agentsDir}`);
   }
   
-  return chats;
+  // ✅ 去重：同一个 accountId 只保留 lastMessageAt 最大的 chat
+  const chatMap = new Map<string, Chat>();
+  for (const chat of chats) {
+    const key = `${chat.channelId}:${chat.accountId}`;
+    const existing = chatMap.get(key);
+    if (!existing || chat.lastMessageAt > existing.lastMessageAt) {
+      chatMap.set(key, chat);
+    }
+  }
+  
+  const dedupedChats = Array.from(chatMap.values());
+  console.log(`[Chat] After dedup: ${dedupedChats.length} chats for channel ${channelId}`);
+  
+  return dedupedChats;
 }
 
 /**
