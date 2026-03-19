@@ -329,8 +329,8 @@ export async function getChatMessages(
     }
   }
   
-  // 按时间戳排序（最新的在前面）
-  allMessages.sort((a, b) => b.timestamp - a.timestamp);
+  // 按时间戳排序（最早的在前面）
+  allMessages.sort((a, b) => a.timestamp - b.timestamp);
   
   // 应用分页
   const pagedMessages = allMessages.slice(offset, offset + limit);
