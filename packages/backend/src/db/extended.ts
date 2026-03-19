@@ -100,6 +100,19 @@ export function initExtendedTables(database: Database.Database): void {
   } catch (e) {
     // 字段已存在，忽略
   }
+  
+  try {
+    db.exec(`ALTER TABLE chats ADD COLUMN is_hidden INTEGER DEFAULT 0`);
+  } catch (e) {
+    // 字段已存在，忽略
+  }
+  
+  // 创建索引
+  try {
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_chats_is_hidden ON chats(is_hidden)`);
+  } catch (e) {
+    // 索引已存在，忽略
+  }
 }
 
 // ==================== 渠道操作 ====================
@@ -199,16 +212,18 @@ export function saveChat(chat: Chat): void {
   );
 }
 
-export function getChats(channelId?: string, limit: number = 50, offset: number = 0): Chat[] {
+export function getChats(channelId?: string, limit: number = 50, offset: number = 0, includeHidden: boolean = false): Chat[] {
   if (!db) throw new Error('Database not initialized');
   
   let stmt;
+  const hiddenCondition = includeHidden ? '' : 'AND (is_hidden = 0 OR is_hidden IS NULL)';
+  
   if (channelId) {
-    stmt = db.prepare(`SELECT * FROM chats WHERE channel_id = ? ORDER BY last_message_at DESC LIMIT ? OFFSET ?`);
+    stmt = db.prepare(`SELECT * FROM chats WHERE channel_id = ? ${hiddenCondition} ORDER BY last_message_at DESC LIMIT ? OFFSET ?`);
     const rows = stmt.all(channelId, limit, offset) as any[];
     return rows.map(rowToChat);
   } else {
-    stmt = db.prepare(`SELECT * FROM chats ORDER BY last_message_at DESC LIMIT ? OFFSET ?`);
+    stmt = db.prepare(`SELECT * FROM chats WHERE 1=1 ${hiddenCondition} ORDER BY last_message_at DESC LIMIT ? OFFSET ?`);
     const rows = stmt.all(limit, offset) as any[];
     return rows.map(rowToChat);
   }
@@ -232,6 +247,50 @@ export function getChatBySessionKey(sessionKey: string): Chat | null {
   return row ? rowToChat(row) : null;
 }
 
+/**
+ * 隐藏聊天
+ */
+export function hideChat(chatId: string): void {
+  if (!db) throw new Error('Database not initialized');
+  
+  const now = Date.now();
+  const stmt = db.prepare(`UPDATE chats SET is_hidden = 1, updated_at = ? WHERE chat_id = ?`);
+  stmt.run(now, chatId);
+}
+
+/**
+ * 取消隐藏聊天
+ */
+export function unhideChat(chatId: string): void {
+  if (!db) throw new Error('Database not initialized');
+  
+  const now = Date.now();
+  const stmt = db.prepare(`UPDATE chats SET is_hidden = 0, updated_at = ? WHERE chat_id = ?`);
+  stmt.run(now, chatId);
+}
+
+/**
+ * 获取隐藏的聊天列表
+ */
+export function getHiddenChats(limit: number = 50, offset: number = 0): Chat[] {
+  if (!db) throw new Error('Database not initialized');
+  
+  const stmt = db.prepare(`SELECT * FROM chats WHERE is_hidden = 1 ORDER BY updated_at DESC LIMIT ? OFFSET ?`);
+  const rows = stmt.all(limit, offset) as any[];
+  return rows.map(rowToChat);
+}
+
+/**
+ * 获取隐藏聊天数量
+ */
+export function getHiddenCount(): number {
+  if (!db) throw new Error('Database not initialized');
+  
+  const stmt = db.prepare(`SELECT COUNT(*) as count FROM chats WHERE is_hidden = 1`);
+  const row = stmt.get() as any;
+  return row?.count || 0;
+}
+
 function rowToChat(row: any): Chat {
   return {
     id: row.chat_id,
@@ -243,6 +302,7 @@ function rowToChat(row: any): Chat {
     messageCount: row.message_count || 0,
     runCount: row.run_count || 0,
     sessionFile: row.session_file || undefined,
+    isHidden: row.is_hidden === 1,
   };
 }
 

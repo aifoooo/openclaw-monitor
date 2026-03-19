@@ -238,57 +238,116 @@ export async function scanAllSessions(
 
 /**
  * 获取聊天的消息列表
+ * 
+ * 从 OpenClaw sessions 目录读取消息文件
+ * 支持两种格式：
+ * 1. {user, assistant} 对话对格式（OpenClaw sessions）
+ * 2. {role, content} 标准格式
  */
 export async function getChatMessages(
   sessionFile: string,
   limit: number = 50,
   offset: number = 0
 ): Promise<Message[]> {
-  if (!fs.existsSync(sessionFile)) {
+  const messages: Message[] = [];
+  
+  // OpenClaw 消息文件目录 - 固定路径
+  // sessionFile 格式: /root/.openclaw/qqbot/sessions/session-xxx.json
+  // 消息文件目录: /root/.openclaw/sessions/
+  const openclawDir = path.resolve(sessionFile, '../../..');
+  const sessionsDir = path.join(openclawDir, 'sessions');
+  
+  console.log(`[Chat] Looking for messages in: ${sessionsDir}`);
+  
+  if (!fs.existsSync(sessionsDir)) {
+    console.log(`[Chat] Sessions directory not found: ${sessionsDir}`);
     return [];
   }
   
-  const messages: Message[] = [];
+  // 读取所有 .jsonl 文件
+  const files = fs.readdirSync(sessionsDir)
+    .filter(f => f.endsWith('.jsonl'))
+    .sort()
+    .reverse(); // 最新的文件优先
   
-  const fileStream = fs.createReadStream(sessionFile, { encoding: 'utf-8' });
-  const rl = readline.createInterface({
-    input: fileStream,
-    crlfDelay: Infinity
-  });
+  console.log(`[Chat] Found ${files.length} message files`);
   
   let index = 0;
   
-  for await (const line of rl) {
-    if (!line.trim()) continue;
+  for (const file of files) {
+    const filePath = path.join(sessionsDir, file);
     
-    // 跳过 offset 条消息
-    if (index < offset) {
-      index++;
-      continue;
+    const fileStream = fs.createReadStream(filePath, { encoding: 'utf-8' });
+    const rl = readline.createInterface({
+      input: fileStream,
+      crlfDelay: Infinity
+    });
+    
+    for await (const line of rl) {
+      if (!line.trim()) continue;
+      
+      try {
+        const msg = JSON.parse(line);
+        const timestamp = msg.timestamp ? new Date(msg.timestamp).getTime() : Date.now();
+        
+        // 格式1: {user, assistant} 对话对格式
+        if (msg.user !== undefined || msg.assistant !== undefined) {
+          // 添加用户消息
+          if (msg.user) {
+            if (index >= offset && messages.length < limit) {
+              messages.push({
+                id: `${msg.id || timestamp}-user`,
+                runId: '',
+                role: 'user',
+                content: parseContent(msg.user),
+                timestamp,
+              });
+            }
+            index++;
+          }
+          
+          // 添加助手消息
+          if (msg.assistant) {
+            if (index >= offset && messages.length < limit) {
+              messages.push({
+                id: `${msg.id || timestamp}-assistant`,
+                runId: '',
+                role: 'assistant',
+                content: parseContent(msg.assistant),
+                timestamp,
+              });
+            }
+            index++;
+          }
+        }
+        // 格式2: {role, content} 标准格式
+        else if (msg.role) {
+          if (index >= offset && messages.length < limit) {
+            messages.push({
+              id: msg.id || `${timestamp}-${index}`,
+              runId: msg.runId || '',
+              role: msg.role,
+              content: parseContent(msg.content || msg.message),
+              timestamp,
+            });
+          }
+          index++;
+        }
+        
+        // 达到 limit 条消息后停止
+        if (messages.length >= limit) {
+          break;
+        }
+      } catch (e) {
+        // 忽略解析错误
+      }
     }
     
-    // 达到 limit 条消息后停止
     if (messages.length >= limit) {
       break;
     }
-    
-    try {
-      const msg = JSON.parse(line);
-      const timestamp = msg.timestamp ? new Date(msg.timestamp).getTime() : Date.now();
-      
-      messages.push({
-        id: msg.id || `${timestamp}-${index}`,
-        runId: msg.runId || '',
-        role: msg.role || 'user',
-        content: parseContent(msg.content || msg.message),
-        timestamp,
-      });
-      
-      index++;
-    } catch (e) {
-      // 忽略解析错误
-    }
   }
   
+  console.log(`[Chat] Loaded ${messages.length} messages`);
   return messages;
 }

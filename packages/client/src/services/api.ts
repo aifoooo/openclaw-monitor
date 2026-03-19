@@ -39,6 +39,29 @@ export async function fetchOperations(runId: string) {
   return response.data;
 }
 
+// 隐藏聊天相关 API
+export async function hideChat(chatId: string) {
+  const response = await api.post(`/api/chats/${chatId}/hide`);
+  return response.data;
+}
+
+export async function unhideChat(chatId: string) {
+  const response = await api.post(`/api/chats/${chatId}/unhide`);
+  return response.data;
+}
+
+export async function fetchHiddenChats(limit = 50, offset = 0) {
+  const response = await api.get('/api/chats/hidden', {
+    params: { limit, offset }
+  });
+  return response.data;
+}
+
+export async function fetchHiddenCount() {
+  const response = await api.get('/api/chats/hidden/count');
+  return response.data;
+}
+
 // WebSocket 连接
 export function createWebSocket(): WebSocket | null {
   const wsUrl = API_BASE.replace(/^http/, 'ws') + '/ws';

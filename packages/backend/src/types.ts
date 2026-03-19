@@ -191,6 +191,7 @@ export interface Chat {
   messageCount: number;          // 消息数量
   runCount: number;              // Run 数量
   sessionFile?: string;          // session 文件路径
+  isHidden?: boolean;            // 是否隐藏
 }
 
 // ==================== 消息模型 ====================
@@ -325,6 +326,7 @@ export interface DBChat {
   message_count: number;
   run_count: number;
   session_file: string | null;
+  is_hidden: number;
   created_at: number;
   updated_at: number;
 }

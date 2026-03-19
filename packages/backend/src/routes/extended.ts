@@ -108,12 +108,13 @@ export function createExtendedRoutes(config: MonitorConfig): Hono {
     const channelId = c.req.query('channelId');
     const limitParam = c.req.query('limit');
     const offsetParam = c.req.query('offset');
+    const includeHidden = c.req.query('includeHidden') === 'true';
     
     const limit = parseInt(limitParam || '50');
     const offset = parseInt(offsetParam || '0');
     
     try {
-      const chats = dbExt.getChats(channelId, limit, offset);
+      const chats = dbExt.getChats(channelId, limit, offset, includeHidden);
       
       return c.json({
         chats,
@@ -124,6 +125,95 @@ export function createExtendedRoutes(config: MonitorConfig): Hono {
     } catch (e) {
       console.error('[API] Error getting chats:', e);
       return c.json({ error: 'Failed to get chats' }, 500);
+    }
+  });
+  
+  /**
+   * GET /api/chats/hidden - 获取隐藏的聊天列表
+   */
+  api.get('/chats/hidden', (c) => {
+    const limitParam = c.req.query('limit');
+    const offsetParam = c.req.query('offset');
+    
+    const limit = parseInt(limitParam || '50');
+    const offset = parseInt(offsetParam || '0');
+    
+    try {
+      const chats = dbExt.getHiddenChats(limit, offset);
+      const hiddenCount = dbExt.getHiddenCount();
+      
+      return c.json({
+        chats,
+        total: hiddenCount,
+        limit,
+        offset,
+      });
+    } catch (e) {
+      console.error('[API] Error getting hidden chats:', e);
+      return c.json({ error: 'Failed to get hidden chats' }, 500);
+    }
+  });
+  
+  /**
+   * GET /api/chats/hidden/count - 获取隐藏聊天数量
+   */
+  api.get('/chats/hidden/count', (c) => {
+    try {
+      const count = dbExt.getHiddenCount();
+      return c.json({ count });
+    } catch (e) {
+      console.error('[API] Error getting hidden count:', e);
+      return c.json({ error: 'Failed to get hidden count' }, 500);
+    }
+  });
+  
+  /**
+   * POST /api/chats/:chatId/hide - 隐藏聊天
+   */
+  api.post('/chats/:chatId/hide', (c) => {
+    const chatId = c.req.param('chatId');
+    
+    try {
+      const ch = dbExt.getChat(chatId);
+      if (!ch) {
+        return c.json({ error: 'Chat not found' }, 404);
+      }
+      
+      dbExt.hideChat(chatId);
+      
+      return c.json({
+        status: 'ok',
+        message: 'Chat hidden successfully',
+        chatId,
+      });
+    } catch (e) {
+      console.error('[API] Error hiding chat:', e);
+      return c.json({ error: 'Failed to hide chat' }, 500);
+    }
+  });
+  
+  /**
+   * POST /api/chats/:chatId/unhide - 取消隐藏聊天
+   */
+  api.post('/chats/:chatId/unhide', (c) => {
+    const chatId = c.req.param('chatId');
+    
+    try {
+      const ch = dbExt.getChat(chatId);
+      if (!ch) {
+        return c.json({ error: 'Chat not found' }, 404);
+      }
+      
+      dbExt.unhideChat(chatId);
+      
+      return c.json({
+        status: 'ok',
+        message: 'Chat unhidden successfully',
+        chatId,
+      });
+    } catch (e) {
+      console.error('[API] Error unhiding chat:', e);
+      return c.json({ error: 'Failed to unhide chat' }, 500);
     }
   });
   

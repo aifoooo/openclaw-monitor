@@ -15,7 +15,8 @@
       <div v-else v-for="chat in filteredChats" :key="chat.id" 
            class="chat-item" 
            :class="{ active: selectedChatId === chat.id }"
-           @click="selectChat(chat)">
+           @click="selectChat(chat)"
+           @contextmenu.prevent="showContextMenu($event, chat)">
         <div class="chat-title">{{ chat.title || chat.sessionKey }}</div>
         <div class="chat-meta">
           <span class="channel">{{ chat.channelId }}</span>
@@ -23,12 +24,21 @@
         </div>
       </div>
     </div>
+    
+    <!-- 右键菜单 -->
+    <div v-if="contextMenu.visible" 
+         class="context-menu" 
+         :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }">
+      <div class="context-menu-item" @click="hideChat(contextMenu.chat)">
+        🙈 隐藏此聊天
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue';
-import { fetchChats } from '../services/api';
+import { ref, computed, onMounted, watch, onUnmounted } from 'vue';
+import { fetchChats, hideChat as hideChatApi } from '../services/api';
 import { debounce } from '../utils/performance';
 
 interface Chat {
@@ -37,8 +47,10 @@ interface Chat {
   accountId: string;
   title: string;
   sessionKey: string;
+  sessionFile?: string;
   lastMessageAt: number;
   messageCount: number;
+  isHidden?: boolean;
 }
 
 const props = defineProps<{
@@ -49,6 +61,14 @@ const chats = ref<Chat[]>([]);
 const searchQuery = ref('');
 const selectedChatId = ref<string>('');
 const loading = ref(false);
+
+// 右键菜单状态
+const contextMenu = ref({
+  visible: false,
+  x: 0,
+  y: 0,
+  chat: null as Chat | null,
+});
 
 const filteredChats = computed(() => {
   let result = chats.value;
@@ -99,6 +119,45 @@ function selectChat(chat: Chat) {
   emit('chat-selected', chat);
 }
 
+// 右键菜单
+function showContextMenu(event: MouseEvent, chat: Chat) {
+  contextMenu.value = {
+    visible: true,
+    x: event.clientX,
+    y: event.clientY,
+    chat,
+  };
+}
+
+function hideContextMenu() {
+  contextMenu.value.visible = false;
+  contextMenu.value.chat = null;
+}
+
+async function hideChat(chat: Chat | null) {
+  if (!chat) return;
+  
+  try {
+    await hideChatApi(chat.id);
+    
+    // 从列表中移除
+    chats.value = chats.value.filter(c => c.id !== chat.id);
+    
+    // 如果当前选中的是被隐藏的聊天，清空选中
+    if (selectedChatId.value === chat.id) {
+      selectedChatId.value = '';
+      emit('chat-selected', null);
+    }
+    
+    // 通知父组件更新隐藏数量
+    emit('chat-hidden');
+    
+    hideContextMenu();
+  } catch (error) {
+    console.error('Failed to hide chat:', error);
+  }
+}
+
 function formatTime(timestamp: number) {
   if (!timestamp) return '-';
   const date = new Date(timestamp);
@@ -119,11 +178,22 @@ function formatTime(timestamp: number) {
 }
 
 const emit = defineEmits<{
-  (e: 'chat-selected', chat: Chat): void;
+  (e: 'chat-selected', chat: Chat | null): void;
+  (e: 'chat-hidden'): void;
 }>();
+
+// 点击其他地方关闭菜单
+function handleClickOutside() {
+  hideContextMenu();
+}
 
 onMounted(() => {
   loadChats();
+  document.addEventListener('click', handleClickOutside);
+});
+
+onUnmounted(() => {
+  document.removeEventListener('click', handleClickOutside);
 });
 </script>
 
@@ -220,5 +290,27 @@ onMounted(() => {
   padding: 2px 6px;
   border-radius: 4px;
   font-size: 11px;
+}
+
+/* 右键菜单 */
+.context-menu {
+  position: fixed;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  z-index: 1000;
+  min-width: 140px;
+}
+
+.context-menu-item {
+  padding: 10px 16px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background-color 0.2s;
+}
+
+.context-menu-item:hover {
+  background-color: #f5f5f5;
 }
 </style>
