@@ -29,6 +29,14 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue';
 import { fetchMessages } from '../services/api';
+import MarkdownIt from 'markdown-it';
+
+const md = new MarkdownIt({
+  html: false,
+  linkify: true,
+  typographer: true,
+  breaks: true,
+});
 
 interface Message {
   id: string;
@@ -97,25 +105,27 @@ function formatTime(timestamp: number) {
 
 function formatContent(content: any): string {
   if (typeof content === 'string') {
-    // 处理特殊标签
+    // 处理特殊标签（在 Markdown 渲染之前）
     let text = content
-      .replace(/<qqfile>([^<]+)<\/qqfile>/g, '📎 文件: $1')
-      .replace(/<qqimg>([^<]+)<\/qqimg>/g, '🖼️ 图片: $1')
-      .replace(/<qqvoice>([^<]+)<\/qqvoice>/g, '🔊 语音: $1')
-      .replace(/<qqvideo>([^<]+)<\/qqvideo>/g, '🎬 视频: $1');
-    return escapeHtml(text).replace(/\n/g, '<br>');
+      .replace(/<qqfile>([^<]+)<\/qqfile>/g, '\n\n📎 **文件**: `$1`\n\n')
+      .replace(/<qqimg>([^<]+)<\/qqimg>/g, '\n\n🖼️ **图片**: `$1`\n\n')
+      .replace(/<qqvoice>([^<]+)<\/qqvoice>/g, '\n\n🔊 **语音**: `$1`\n\n')
+      .replace(/<qqvideo>([^<]+)<\/qqvideo>/g, '\n\n🎬 **视频**: `$1`\n\n');
+    
+    // 渲染 Markdown
+    return md.render(text);
   }
   
   if (Array.isArray(content)) {
     return content.map(item => {
       if (item.type === 'text') {
-        return escapeHtml(item.text || '').replace(/\n/g, '<br>');
+        return md.render(item.text || '');
       }
-      return `[${item.type}]`;
+      return `<span class="tag unknown">[${item.type}]</span>`;
     }).join('');
   }
   
-  return escapeHtml(JSON.stringify(content, null, 2));
+  return md.render(`\`\`\`json\n${JSON.stringify(content, null, 2)}\n\`\`\``);
 }
 
 function escapeHtml(text: string): string {
@@ -222,8 +232,125 @@ onMounted(() => {
   font-size: 14px;
   line-height: 1.7;
   color: #333;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans SC', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol';
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans SC', 'Noto Color Emoji', 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif;
+}
+
+/* Markdown 渲染样式 */
+.text-content :deep(h1),
+.text-content :deep(h2),
+.text-content :deep(h3) {
+  margin: 16px 0 8px 0;
+  font-weight: 600;
+  color: #333;
+}
+
+.text-content :deep(h2) {
+  font-size: 16px;
+  border-bottom: 1px solid #e0e0e0;
+  padding-bottom: 8px;
+}
+
+.text-content :deep(table) {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 12px 0;
+  font-size: 13px;
+}
+
+.text-content :deep(th),
+.text-content :deep(td) {
+  border: 1px solid #e0e0e0;
+  padding: 8px 12px;
+  text-align: left;
+}
+
+.text-content :deep(th) {
+  background: #f5f5f5;
+  font-weight: 600;
+}
+
+.text-content :deep(code) {
+  background: #f5f5f5;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+  font-size: 13px;
+}
+
+.text-content :deep(pre) {
+  background: #f5f5f5;
+  padding: 12px;
+  border-radius: 8px;
+  overflow-x: auto;
+  margin: 12px 0;
+}
+
+.text-content :deep(pre code) {
+  background: transparent;
+  padding: 0;
+}
+
+.text-content :deep(p) {
+  margin: 8px 0;
+}
+
+.text-content :deep(ul),
+.text-content :deep(ol) {
+  margin: 8px 0;
+  padding-left: 24px;
+}
+
+.text-content :deep(li) {
+  margin: 4px 0;
+}
+
+.text-content :deep(blockquote) {
+  border-left: 3px solid #1976d2;
+  padding-left: 12px;
+  margin: 12px 0;
+  color: #666;
+}
+
+.text-content :deep(hr) {
+  border: none;
+  border-top: 1px solid #e0e0e0;
+  margin: 16px 0;
+}
+
+.text-content :deep(strong) {
+  font-weight: 600;
+}
+
+.tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  margin: 2px 0;
+}
+
+.tag.file {
+  background: #e3f2fd;
+  color: #1565c0;
+}
+
+.tag.image {
+  background: #f3e5f5;
+  color: #7b1fa2;
+}
+
+.tag.voice {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.tag.video {
+  background: #fff3e0;
+  color: #e65100;
+}
+
+.tag.unknown {
+  background: #f5f5f5;
+  color: #666;
 }
 </style>

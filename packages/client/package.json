@@ -9,16 +9,18 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@types/markdown-it": "^14.1.2",
+    "axios": "^1.6.0",
+    "markdown-it": "^14.1.1",
+    "pinia": "^2.1.0",
     "vue": "^3.4.0",
     "vue-router": "^4.2.0",
-    "pinia": "^2.1.0",
-    "axios": "^1.6.0",
     "ws": "^8.16.0"
   },
   "devDependencies": {
+    "@types/node": "^20.11.0",
     "@vitejs/plugin-vue": "^5.0.0",
-    "vite": "^5.0.0",
     "typescript": "^5.3.3",
-    "@types/node": "^20.11.0"
+    "vite": "^5.0.0"
   }
 }
