@@ -37,7 +37,7 @@
       
       <!-- 聊天列表 -->
       <aside class="sidebar">
-        <ChatList :channel-id="selectedChannel" @chat-selected="onChatSelected" @chat-hidden="onChatHidden" />
+        <ChatList ref="chatListRef" :channel-id="selectedChannel" @chat-selected="onChatSelected" @chat-hidden="onChatHidden" />
       </aside>
       
       <!-- 消息详情 -->
@@ -65,6 +65,7 @@ const connected = ref(false);
 const showHidden = ref(false);
 const hiddenChats = ref<any[]>([]);
 const hiddenCount = ref(0);
+const chatListRef = ref<{ refresh: () => void } | null>(null);
 let ws: WebSocket | null = null;
 
 async function loadChannels() {
@@ -123,6 +124,11 @@ async function unhideChat(chat: any) {
     
     // 更新隐藏数量
     await loadHiddenCount();
+    
+    // 刷新聊天列表
+    if (chatListRef.value) {
+      chatListRef.value.refresh();
+    }
   } catch (error) {
     console.error('Failed to unhide chat:', error);
   }
@@ -131,11 +137,14 @@ async function unhideChat(chat: any) {
 function handleWebSocketMessage(data: any) {
   console.log('[WS] Received:', data);
   
-  if (data.type === 'chat:updated') {
-    // 刷新当前聊天列表
+  if (data.type === 'chat:updated' || data.type === 'new_message') {
+    // 刷新聊天列表
+    if (chatListRef.value) {
+      chatListRef.value.refresh();
+    }
+    
+    // 刷新当前聊天消息
     if (selectedChat.value) {
-      // 触发 MessageDetail 重新加载
-      // 通过改变 selectedChat 引用来触发更新
       const temp = selectedChat.value;
       selectedChat.value = null;
       setTimeout(() => {

@@ -64,9 +64,13 @@ export async function fetchHiddenCount() {
 
 // WebSocket 连接
 export function createWebSocket(onMessage?: (data: any) => void): WebSocket | null {
+  // 开发环境直连后端 3000 端口，生产环境使用当前 host
+  const isDev = typeof window !== 'undefined' && window.location.port === '5173';
   const protocol = typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const host = typeof window !== 'undefined' ? window.location.host : 'localhost:3000';
+  const host = isDev ? 'localhost:3000' : (typeof window !== 'undefined' ? window.location.host : 'localhost:3000');
   const wsUrl = `${protocol}//${host}/ws`;
+  
+  console.log('[WS] Connecting to:', wsUrl);
   
   // 如果有 Token，添加到 URL
   const url = API_TOKEN ? `${wsUrl}?token=${API_TOKEN}` : wsUrl;

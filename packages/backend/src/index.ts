@@ -38,13 +38,16 @@ initDB(config.dbPath);
 console.log(`[Monitor] Database initialized: ${config.dbPath}`);
 
 // 创建应用
-const { app, runCache } = createApp();
+const { app, runCache, injectWebSocket } = createApp();
 
 // 启动服务
 const server = serve({
   fetch: app.fetch,
   port: config.port,
 });
+
+// ✅ 注入 WebSocket 支持
+injectWebSocket(server);
 
 console.log(`[Monitor] Server started on http://localhost:${config.port}`);
 

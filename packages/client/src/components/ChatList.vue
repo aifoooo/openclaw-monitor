@@ -182,6 +182,11 @@ const emit = defineEmits<{
   (e: 'chat-hidden'): void;
 }>();
 
+// 暴露刷新方法给父组件
+defineExpose({
+  refresh: loadChats,
+});
+
 // 点击其他地方关闭菜单
 function handleClickOutside() {
   hideContextMenu();
