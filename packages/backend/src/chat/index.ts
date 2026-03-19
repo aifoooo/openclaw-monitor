@@ -185,6 +185,76 @@ function extractTitle(sessionKey: string): string {
 }
 
 /**
+ * 从 sessions.json 读取正确的 sessionFile 路径
+ */
+function getSessionFileFromSessionsJson(
+  sessionsJsonPath: string,
+  sessionKeyPrefix: string
+): { sessionFile: string; messageCount: number; lastMessageAt: number } | null {
+  try {
+    const content = fs.readFileSync(sessionsJsonPath, 'utf-8');
+    const sessionsData = JSON.parse(content);
+    
+    // sessionsData 是一个对象，key 是 sessionKey
+    for (const [key, value] of Object.entries(sessionsData)) {
+      if (key.startsWith(sessionKeyPrefix) || key.includes(sessionKeyPrefix.split(':')[2])) {
+        const session = value as any;
+        if (session.sessionFile) {
+          // 统计消息数量
+          let messageCount = 0;
+          let lastMessageAt = session.updatedAt || 0;
+          
+          if (fs.existsSync(session.sessionFile)) {
+            const fileContent = fs.readFileSync(session.sessionFile, 'utf-8');
+            const lines = fileContent.split('\n');
+            for (const line of lines) {
+              if (line.includes('"type":"message"')) {
+                // 只统计 user/assistant 消息，排除 toolResult
+                if (line.includes('"role":"user"') || line.includes('"role":"assistant"')) {
+                  messageCount++;
+                }
+              }
+            }
+          }
+          
+          return {
+            sessionFile: session.sessionFile,
+            messageCount,
+            lastMessageAt,
+          };
+        }
+      }
+    }
+  } catch (e) {
+    // 忽略错误
+  }
+  return null;
+}
+
+/**
+ * 统计 .jsonl 文件中的消息数量
+ * 只统计 user/assistant 消息，不统计 toolResult
+ */
+function countMessagesInFile(filePath: string): number {
+  try {
+    const content = fs.readFileSync(filePath, 'utf-8');
+    const lines = content.split('\n');
+    let count = 0;
+    for (const line of lines) {
+      if (line.includes('"type":"message"')) {
+        // 只统计 user/assistant 消息，排除 toolResult
+        if (line.includes('"role":"user"') || line.includes('"role":"assistant"')) {
+          count++;
+        }
+      }
+    }
+    return count;
+  } catch (e) {
+    return 0;
+  }
+}
+
+/**
  * 扫描渠道的所有 Session 文件
  */
 export async function scanChannelSessions(
@@ -223,17 +293,57 @@ export async function scanChannelSessions(
           const inferredSessionKey = meta.sessionKey || 
             `agent:${accountId}-${channelId}:${channelId}:direct:${meta.sessionId || accountFromFileName}`;
           
+          // ✅ 关键修复：从 agents 目录的 sessions.json 读取正确的 sessionFile
+          const agentsDir = path.join(openclawDir, 'agents');
+          let sessionFile = filePath;
+          let messageCount = 0;
+          let lastMessageAt = meta.lastConnectedAt || meta.savedAt;
+          
+          // 查找对应的 agent 目录
+          const agentDirs = fs.existsSync(agentsDir) 
+            ? fs.readdirSync(agentsDir, { withFileTypes: true })
+                .filter(d => d.isDirectory())
+                .map(d => d.name)
+            : [];
+          
+          // ✅ 修复匹配逻辑：渠道名和目录名的映射
+          // qqbot -> *-qq, feishu -> *-feishu
+          const channelToSuffix: Record<string, string> = {
+            'qqbot': 'qq',
+            'feishu': 'feishu',
+          };
+          const expectedSuffix = channelToSuffix[channelId] || channelId;
+          
+          for (const agentName of agentDirs) {
+            // 匹配：目录名以渠道后缀结尾，且包含账号名
+            const matches = (agentName.endsWith('-' + expectedSuffix) || agentName.includes(expectedSuffix)) 
+              && agentName.includes(accountFromFileName);
+            
+            if (matches) {
+              const sessionsJsonPath = path.join(agentsDir, agentName, 'sessions', 'sessions.json');
+              if (fs.existsSync(sessionsJsonPath)) {
+                const sessionInfo = getSessionFileFromSessionsJson(sessionsJsonPath, inferredSessionKey);
+                if (sessionInfo) {
+                  sessionFile = sessionInfo.sessionFile;
+                  messageCount = sessionInfo.messageCount;
+                  lastMessageAt = sessionInfo.lastMessageAt;
+                  break;
+                }
+              }
+            }
+          }
+          
           // 创建 Chat 对象
           const chat: Chat = {
             id: extractChatId(inferredSessionKey),
             channelId,
             accountId: meta.accountId || accountId,
             sessionKey: inferredSessionKey,
-            title: meta.title || `${channelId} - ${meta.accountId || accountFromFileName}`,
-            lastMessageAt: meta.lastConnectedAt || meta.savedAt,
-            messageCount: 0,
+            title: `${channelId} - ${meta.accountId || accountFromFileName}`,
+            lastMessageAt,
+            messageCount,
             runCount: 0,
-            sessionFile: filePath,
+            sessionFile,
           };
           
           chats.push(chat);
@@ -296,7 +406,7 @@ export async function scanChannelSessions(
   for (const chat of chats) {
     const key = `${chat.channelId}:${chat.accountId}`;
     const existing = chatMap.get(key);
-    if (!existing || chat.lastMessageAt > existing.lastMessageAt) {
+    if (!existing || (chat.lastMessageAt || 0) > (existing.lastMessageAt || 0)) {
       chatMap.set(key, chat);
     }
   }
@@ -348,93 +458,93 @@ export async function scanAllSessions(
 /**
  * 获取聊天的消息列表
  * 
- * 从 OpenClaw sessions 目录读取消息文件
- * 支持两种格式：
- * 1. {user, assistant} 对话对格式（OpenClaw sessions）
- * 2. {role, content} 标准格式
+ * 从 sessionFile 指定的 .jsonl 文件读取消息
+ * 支持 OpenClaw 的消息格式：{type: "message", message: {role, content}}
  */
 export async function getChatMessages(
   sessionFile: string,
   limit: number = 50,
   offset: number = 0
 ): Promise<Message[]> {
-  // OpenClaw 消息文件目录 - 固定路径
-  // sessionFile 格式: /root/.openclaw/qqbot/sessions/session-xxx.json
-  // 消息文件目录: /root/.openclaw/sessions/
-  const openclawDir = path.resolve(sessionFile, '../../..');
-  const sessionsDir = path.join(openclawDir, 'sessions');
+  console.log(`[Chat] Looking for messages in: ${sessionFile}`);
   
-  console.log(`[Chat] Looking for messages in: ${sessionsDir}`);
-  
-  if (!fs.existsSync(sessionsDir)) {
-    console.log(`[Chat] Sessions directory not found: ${sessionsDir}`);
+  // 检查 sessionFile 是否存在且是 .jsonl 文件
+  if (!sessionFile || !fs.existsSync(sessionFile)) {
+    console.log(`[Chat] Session file not found: ${sessionFile}`);
     return [];
   }
   
-  // 读取所有 .jsonl 文件
-  const files = fs.readdirSync(sessionsDir)
-    .filter(f => f.endsWith('.jsonl'))
-    .sort()
-    .reverse(); // 最新的文件优先
+  if (!sessionFile.endsWith('.jsonl')) {
+    console.log(`[Chat] Not a .jsonl file: ${sessionFile}`);
+    return [];
+  }
   
-  console.log(`[Chat] Found ${files.length} message files`);
-  
-  // 先收集所有消息，再排序
+  // 收集所有消息
   const allMessages: Message[] = [];
   
-  for (const file of files) {
-    const filePath = path.join(sessionsDir, file);
+  const fileStream = fs.createReadStream(sessionFile, { encoding: 'utf-8' });
+  const rl = readline.createInterface({
+    input: fileStream,
+    crlfDelay: Infinity
+  });
+  
+  for await (const line of rl) {
+    if (!line.trim()) continue;
     
-    const fileStream = fs.createReadStream(filePath, { encoding: 'utf-8' });
-    const rl = readline.createInterface({
-      input: fileStream,
-      crlfDelay: Infinity
-    });
-    
-    for await (const line of rl) {
-      if (!line.trim()) continue;
+    try {
+      const msg = JSON.parse(line);
       
-      try {
-        const msg = JSON.parse(line);
+      // OpenClaw 格式：{type: "message", message: {role, content, timestamp}}
+      if (msg.type === 'message' && msg.message) {
+        const timestamp = msg.message.timestamp 
+          ? (typeof msg.message.timestamp === 'number' ? msg.message.timestamp : new Date(msg.message.timestamp).getTime())
+          : (msg.timestamp ? new Date(msg.timestamp).getTime() : Date.now());
+        
+        allMessages.push({
+          id: msg.id || `${timestamp}-${allMessages.length}`,
+          runId: msg.runId || '',
+          role: msg.message.role || 'user',
+          content: msg.message.content || [],
+          timestamp,
+        });
+      }
+      // 兼容格式：{user, assistant} 对话对格式
+      else if (msg.user !== undefined || msg.assistant !== undefined) {
         const timestamp = msg.timestamp ? new Date(msg.timestamp).getTime() : Date.now();
         
-        // 格式1: {user, assistant} 对话对格式
-        if (msg.user !== undefined || msg.assistant !== undefined) {
-          // 添加用户消息
-          if (msg.user) {
-            allMessages.push({
-              id: `${msg.id || timestamp}-user`,
-              runId: '',
-              role: 'user',
-              content: parseContent(msg.user),
-              timestamp,
-            });
-          }
-          
-          // 添加助手消息
-          if (msg.assistant) {
-            allMessages.push({
-              id: `${msg.id || timestamp}-assistant`,
-              runId: '',
-              role: 'assistant',
-              content: parseContent(msg.assistant),
-              timestamp,
-            });
-          }
-        }
-        // 格式2: {role, content} 标准格式
-        else if (msg.role) {
+        if (msg.user) {
           allMessages.push({
-            id: msg.id || `${timestamp}-${allMessages.length}`,
-            runId: msg.runId || '',
-            role: msg.role,
-            content: parseContent(msg.content || msg.message),
+            id: `${msg.id || timestamp}-user`,
+            runId: '',
+            role: 'user',
+            content: parseContent(msg.user),
             timestamp,
           });
         }
-      } catch (e) {
-        // 忽略解析错误
+        
+        if (msg.assistant) {
+          allMessages.push({
+            id: `${msg.id || timestamp}-assistant`,
+            runId: '',
+            role: 'assistant',
+            content: parseContent(msg.assistant),
+            timestamp,
+          });
+        }
       }
+      // 兼容格式：{role, content} 标准格式
+      else if (msg.role) {
+        const timestamp = msg.timestamp ? new Date(msg.timestamp).getTime() : Date.now();
+        allMessages.push({
+          id: msg.id || `${timestamp}-${allMessages.length}`,
+          runId: msg.runId || '',
+          role: msg.role,
+          content: parseContent(msg.content || msg.message),
+          timestamp,
+        });
+      }
+    } catch (e) {
+      // 忽略解析错误
     }
   }
   

@@ -64,11 +64,31 @@ export async function fetchHiddenCount() {
 
 // WebSocket 连接
 export function createWebSocket(onMessage?: (data: any) => void): WebSocket | null {
-  // 开发环境直连后端 3000 端口，生产环境使用当前 host
-  const isDev = typeof window !== 'undefined' && window.location.port === '5173';
-  const protocol = typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const host = isDev ? 'localhost:3000' : (typeof window !== 'undefined' ? window.location.host : 'localhost:3000');
-  const wsUrl = `${protocol}//${host}/ws`;
+  // WebSocket 连接地址优先级：
+  // 1. VITE_WS_URL 环境变量（完整 URL，如 ws://192.168.1.100:3000/ws）
+  // 2. VITE_API_BASE 环境变量的 host（如 http://192.168.1.100:3000 → ws://192.168.1.100:3000/ws）
+  // 3. 开发模式默认 localhost:3000
+  // 4. 生产模式使用当前页面 host
+  
+  let wsUrl: string;
+  
+  if (import.meta.env.VITE_WS_URL) {
+    // 方式1：直接配置 WebSocket URL
+    wsUrl = import.meta.env.VITE_WS_URL;
+  } else if (API_BASE && API_BASE !== '') {
+    // 方式2：从 API_BASE 推导
+    const protocol = API_BASE.startsWith('https') ? 'wss:' : 'ws:';
+    const host = API_BASE.replace(/^https?:\/\//, '');
+    wsUrl = `${protocol}//${host}/ws`;
+  } else if (typeof window !== 'undefined' && window.location.port === '5173') {
+    // 方式3：开发模式默认
+    wsUrl = 'ws://localhost:3000/ws';
+  } else {
+    // 方式4：生产模式使用当前 host
+    const protocol = typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = typeof window !== 'undefined' ? window.location.host : 'localhost:3000';
+    wsUrl = `${protocol}//${host}/ws`;
+  }
   
   console.log('[WS] Connecting to:', wsUrl);
   
