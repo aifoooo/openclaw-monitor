@@ -35,6 +35,7 @@ export function startChatTimeSync(intervalMs: number = 60000): void {
           .map(c => ({
             chatId: c.id,
             sessionFile: c.sessionFile!,
+            sessionKey: c.sessionKey,  // ✅ 添加 sessionKey
           }));
         
         if (syncItems.length > 0) {

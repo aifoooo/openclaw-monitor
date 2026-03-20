@@ -215,15 +215,40 @@ export function saveChat(chat: Chat): void {
 }
 
 /**
+ * 生成聊天标题
+ */
+function generateTitle(sessionKey: string, timestamp?: number): string {
+  const parts = sessionKey.split(':');
+  
+  // 提取 session ID 的最后部分
+  const lastPart = parts[parts.length - 1];
+  const shortId = lastPart.substring(0, 8);
+  
+  // 如果有时间，显示时间 + ID
+  if (timestamp) {
+    const date = new Date(timestamp);
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const hour = String(date.getHours()).padStart(2, '0');
+    const minute = String(date.getMinutes()).padStart(2, '0');
+    return `${month}-${day} ${hour}:${minute} (${shortId})`;
+  }
+  
+  // 如果没有时间，显示渠道 + ID
+  const channelId = parts[1] || parts[0];
+  return `${channelId} (${shortId})`;
+}
+
+/**
  * 同步聊天时间（从消息文件读取最新时间）
  */
-export function syncChatTimes(sessionFiles: { chatId: string; sessionFile: string }[]): number {
+export function syncChatTimes(sessionFiles: { chatId: string; sessionFile: string; sessionKey?: string }[]): number {
   if (!db) return 0;
   
   const { execSync } = require('child_process');
   let updated = 0;
   
-  for (const { chatId, sessionFile } of sessionFiles) {
+  for (const { chatId, sessionFile, sessionKey } of sessionFiles) {
     try {
       if (!fs.existsSync(sessionFile) || !sessionFile.endsWith('.jsonl')) {
         continue;
@@ -258,10 +283,13 @@ export function syncChatTimes(sessionFiles: { chatId: string; sessionFile: strin
         }
       }
       
-      if (lastMessageTime > 0) {
-        // 更新数据库
-        const stmt = db!.prepare('UPDATE chats SET last_message_at = ? WHERE chat_id = ?');
-        stmt.run(lastMessageTime, chatId);
+      if (lastMessageTime > 0 && sessionKey) {
+        // 生成新标题（使用 sessionKey 和新时间）
+        const newTitle = generateTitle(sessionKey, lastMessageTime);
+        
+        // 更新数据库（同时更新时间和标题）
+        const stmt = db!.prepare('UPDATE chats SET last_message_at = ?, title = ? WHERE chat_id = ?');
+        stmt.run(lastMessageTime, newTitle, chatId);
         updated++;
       }
     } catch (e) {
