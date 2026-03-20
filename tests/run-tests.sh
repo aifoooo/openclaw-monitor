@@ -81,15 +81,17 @@ test_session_count() {
     # 统计文件系统 session 数量
     file_count=$(find $SESSION_DIR/*/sessions -name "*.jsonl" -type f 2>/dev/null | wc -l)
     
+    # 统计有渠道的 session 文件数量（排除 main agent）
+    valid_session_count=$(find $SESSION_DIR/*/sessions -name "*.jsonl" -type f 2>/dev/null | grep -v "/main/" | wc -l)
+    
     # 获取 API chats 数量
     api_result=$(curl -s -H "X-API-Key: $TOKEN" http://localhost:3000/api/chats 2>/dev/null)
     api_count=$(echo "$api_result" | jq '.total')
     
-    # 由于一个 session 文件可能对应多个 chats，所以 api_count >= file_count 是正常的
-    if [ "$api_count" -ge "$file_count" ]; then
-        print_result 0 "API chats数量($api_count) >= Session文件数量($file_count)（正常）"
+    if [ "$api_count" -ge "$valid_session_count" ]; then
+        print_result 0 "API chats数量($api_count) >= 有效session文件数量($valid_session_count)（正常）"
     else
-        print_warning "API chats数量($api_count) < Session文件数量($file_count)（可能有问题）"
+        print_warning "API chats数量($api_count) < 有效session文件数量($valid_session_count)（可能有问题）"
     fi
 }
 
@@ -99,25 +101,33 @@ test_session_integrity() {
     
     total_sessions=0
     missing_sessions=0
+    skipped_sessions=0
     
     for file in $(find $SESSION_DIR/*/sessions -name "*.jsonl" -type f 2>/dev/null); do
         session_id=$(basename "$file" .jsonl)
+        agent=$(echo $file | sed 's|.*/agents/\([^/]*\)/sessions/.*|\1|')
         total_sessions=$((total_sessions + 1))
         
+        # main agent 的 session 没有 sessionKey，不显示是正常的
+        if [ "$agent" = "main" ]; then
+            skipped_sessions=$((skipped_sessions + 1))
+            continue
+        fi
+        
         # 检查 chats 表中是否存在
-        # chat_id 格式为 "direct:SESSION_ID" 或其他前缀
-        db_count=$(sqlite3 $DB_PATH "SELECT COUNT(*) FROM chats WHERE chat_id LIKE '%${session_id}%';" 2>/dev/null)
+        # session_file 字段包含 session_id
+        db_count=$(sqlite3 $DB_PATH "SELECT COUNT(*) FROM chats WHERE session_file LIKE '%${session_id}%';" 2>/dev/null)
         
         if [ "$db_count" -eq 0 ]; then
-            echo "  缺失: $session_id"
+            echo "  缺失: $session_id ($agent)"
             missing_sessions=$((missing_sessions + 1))
         fi
     done
     
     if [ "$missing_sessions" -eq 0 ]; then
-        print_result 0 "所有 $total_sessions 个 session 文件都在 chats 表中有记录"
+        print_result 0 "所有 $((total_sessions - skipped_sessions)) 个有效 session 文件都在 chats 表中有记录（跳过 $skipped_sessions 个 main agent session）"
     else
-        print_warning "有 $missing_sessions 个 session 文件未在 chats 表中找到"
+        print_warning "有 $missing_sessions 个有效 session 文件未在 chats 表中找到"
     fi
 }
 

@@ -443,7 +443,7 @@ export function getAccounts(): Account[] {
     FROM chats
     WHERE is_hidden = 0
     GROUP BY channel_id, account_id
-    ORDER BY channel_id, account_id
+    ORDER BY last_activity DESC
   `);
   
   const rows = stmt.all() as any[];

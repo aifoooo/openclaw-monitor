@@ -10,6 +10,57 @@ import * as readline from 'readline';
 import type { Chat, Message } from '../types';
 
 /**
+ * 从 sessionKey 中提取正确的 channelId 和 accountId
+ * 
+ * sessionKey 格式：
+ * - agent:mime-qqbot:qqbot:direct:xxx → channelId=qqbot, accountId=mime-qqbot
+ * - agent:main:main:direct:xxx → channelId=main, accountId=main
+ * - agent:wife-qq:wife-qq:direct:xxx → channelId=local, accountId=wife-qq
+ * - qqbot:c2c:xxx → channelId=qqbot, accountId=unknown
+ */
+function extractChannelAndAccountFromSessionKey(
+  sessionKey: string,
+  filePath: string
+): { channelId: string; accountId: string } {
+  const parts = sessionKey.split(':');
+  
+  // 格式：agent:agentName:channelId:chatType:sessionId
+  if (parts[0] === 'agent' && parts.length >= 3) {
+    const agentName = parts[1];
+    const channelId = parts[2];
+    return {
+      channelId,
+      accountId: agentName,
+    };
+  }
+  
+  // 格式：qqbot:c2c:xxx 或 feishu:xxx
+  if (parts.length >= 2) {
+    const channelId = parts[0];
+    const accountId = parts[1];
+    return {
+      channelId,
+      accountId,
+    };
+  }
+  
+  // 从文件路径推断
+  // /root/.openclaw/agents/mime-qq/sessions/xxx.jsonl → accountId=mime-qq
+  const match = filePath.match(/\/agents\/([^\/]+)\/sessions\//);
+  if (match) {
+    return {
+      channelId: 'local',
+      accountId: match[1],
+    };
+  }
+  
+  return {
+    channelId: 'unknown',
+    accountId: 'unknown',
+  };
+}
+
+/**
  * 解析 Session 文件
  */
 export async function parseSessionFile(
@@ -135,10 +186,15 @@ export async function parseSessionFile(
       return null;
     }
     
+    // ✅ 新增：从 sessionKey 中提取正确的 channelId 和 accountId
+    const extractedInfo = extractChannelAndAccountFromSessionKey(sessionKey, filePath);
+    const finalChannelId = extractedInfo.channelId || channelId;
+    const finalAccountId = extractedInfo.accountId || accountId;
+    
     return {
       id: extractChatId(sessionKey),
-      channelId,
-      accountId,
+      channelId: finalChannelId,
+      accountId: finalAccountId,
       sessionKey,
       title,
       lastMessageAt,
@@ -496,15 +552,29 @@ export async function scanAllSessions(
       
       // 如果没有被扫描过，则扫描
       if (!alreadyScanned) {
-        // 对于 main agent，使用 'main' 作为渠道 ID
-        const channelId = agentName === 'main' ? 'main' : agentName;
+        // ✅ 修复：对于没有关联渠道的 agent（如 main），使用 'local' 作为渠道 ID
+        // parseSessionFile 会从 sessionKey 中提取正确的 channelId
+        const channelId = 'local';
         const chats = await scanChannelSessions(openclawDir, channelId, agentName);
         allChats.push(...chats);
       }
     }
   }
   
-  return allChats;
+  // ✅ 去重：同一个 sessionKey 只保留 lastMessageAt 最大的 chat
+  const chatMap = new Map<string, Chat>();
+  for (const chat of allChats) {
+    const key = chat.sessionKey || `${chat.channelId}:${chat.accountId}:${chat.id}`;
+    const existing = chatMap.get(key);
+    if (!existing || (chat.lastMessageAt || 0) > (existing.lastMessageAt || 0)) {
+      chatMap.set(key, chat);
+    }
+  }
+  
+  const dedupedChats = Array.from(chatMap.values());
+  console.log(`[Chat] Total after dedup: ${dedupedChats.length} chats`);
+  
+  return dedupedChats;
 }
 
 /**
