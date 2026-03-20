@@ -78,6 +78,8 @@ async function loadAccounts() {
 
 function onAccountChange() {
   selectedChat.value = null;
+  // ✅ 保存选择到 localStorage
+  localStorage.setItem('openclaw-monitor-selected-account', selectedAccount.value);
 }
 
 function onChatSelected(chat: any) {
@@ -149,6 +151,12 @@ function connectWebSocket() {
 onMounted(() => {
   loadAccounts();
   connectWebSocket();
+  
+  // ✅ 从 localStorage 恢复上次选择的账号
+  const savedAccount = localStorage.getItem('openclaw-monitor-selected-account');
+  if (savedAccount) {
+    selectedAccount.value = savedAccount;
+  }
 });
 
 onUnmounted(() => {
