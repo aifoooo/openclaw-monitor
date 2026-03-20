@@ -46,7 +46,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, watch } from 'vue';
 import { fetchChats } from '../services/api';
 
 interface Chat {
@@ -90,6 +90,13 @@ const filteredChats = computed(() => {
   
   return result.sort((a, b) => (b.lastMessageAt || 0) - (a.lastMessageAt || 0));
 });
+
+// ✅ 当过滤后的聊天列表变化且没有选中聊天时，自动选中第一个
+watch(filteredChats, (newChats) => {
+  if (newChats.length > 0 && !selectedChatId.value) {
+    selectChat(newChats[0]);
+  }
+}, { immediate: true });
 
 async function loadChats() {
   loading.value = true;

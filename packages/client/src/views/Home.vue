@@ -164,13 +164,6 @@ onMounted(() => {
   if (savedAccount) {
     selectedAccount.value = savedAccount;
   }
-  
-  // ✅ 自动选中第一个聊天
-  nextTick(() => {
-    if (chatListRef.value) {
-      chatListRef.value.selectFirst();
-    }
-  });
 });
 
 onUnmounted(() => {
