@@ -24,6 +24,7 @@ export async function parseSessionFile(
   try {
     const messages: Message[] = [];
     let lastMessageAt = 0;
+    let firstMessageAt = 0;  // 新增：第一条消息时间
     let sessionKey = '';
     let title = '';
     let sessionId = '';
@@ -70,6 +71,12 @@ export async function parseSessionFile(
         
         // 提取时间戳
         const timestamp = msg.timestamp ? new Date(msg.timestamp).getTime() : Date.now();
+        
+        // 新增：记录第一条消息的时间
+        if (firstMessageAt === 0) {
+          firstMessageAt = timestamp;
+        }
+        
         if (timestamp > lastMessageAt) {
           lastMessageAt = timestamp;
         }
@@ -102,13 +109,25 @@ export async function parseSessionFile(
     // ✅ 如果没有 sessionKey，从文件名推断
     if (!sessionKey && sessionId) {
       sessionKey = `agent:${accountId}:${channelId}:direct:${sessionId}`;
-      title = `${channelId} - ${sessionId.substring(0, 8)}`;
+      title = extractTitle(sessionKey, firstMessageAt);
     }
     
-    // ✅ 如果 sessionKey 只是 "params"，重新构造
+    // ✅ 如果还是没有 sessionKey，从文件名生成一个
+    if (!sessionKey) {
+      const fileName = path.basename(filePath, '.jsonl');
+      sessionKey = `agent:${accountId}:${channelId}:direct:${fileName}`;
+      title = extractTitle(sessionKey, firstMessageAt);
+      console.log(`[Chat] Generated sessionKey from filename: ${sessionKey}`);
+    }
+    
     if (sessionKey === 'params' && sessionId) {
       sessionKey = `agent:${accountId}:${channelId}:direct:${sessionId}`;
-      title = `${channelId} - ${sessionId.substring(0, 8)}`;
+      title = extractTitle(sessionKey, firstMessageAt);
+    }
+    
+    // ✅ 改进：使用第一条消息时间生成 title
+    if (sessionKey && firstMessageAt > 0) {
+      title = extractTitle(sessionKey, firstMessageAt);
     }
     
     if (!sessionKey) {
@@ -170,18 +189,28 @@ function extractChatId(sessionKey: string): string {
 
 /**
  * 从 sessionKey 提取标题
+ * 格式：时间 + 短ID（例如：03-15 04:00 (7add3c20)）
  */
-function extractTitle(sessionKey: string): string {
+function extractTitle(sessionKey: string, createdAt?: number): string {
   const parts = sessionKey.split(':');
   
-  // 提取渠道和类型
-  const channelType = parts.includes('group') ? '群聊' : '私聊';
+  // 提取 session ID 的最后部分
   const lastPart = parts[parts.length - 1];
-  
-  // 截取前 8 位作为显示
   const shortId = lastPart.substring(0, 8);
   
-  return `${channelType} ${shortId}...`;
+  // 如果有创建时间，显示时间 + ID
+  if (createdAt) {
+    const date = new Date(createdAt);
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const hour = String(date.getHours()).padStart(2, '0');
+    const minute = String(date.getMinutes()).padStart(2, '0');
+    return `${month}-${day} ${hour}:${minute} (${shortId})`;
+  }
+  
+  // 如果没有时间，显示渠道 + ID
+  const channelId = parts[1] || parts[0];
+  return `${channelId} (${shortId})`;
 }
 
 /**
@@ -401,10 +430,10 @@ export async function scanChannelSessions(
     console.log(`[Chat] Agents directory not found: ${agentsDir}`);
   }
   
-  // ✅ 去重：同一个 accountId 只保留 lastMessageAt 最大的 chat
+  // ✅ 去重：同一个 sessionKey 只保留 lastMessageAt 最大的 chat
   const chatMap = new Map<string, Chat>();
   for (const chat of chats) {
-    const key = `${chat.channelId}:${chat.accountId}`;
+    const key = chat.sessionKey || `${chat.channelId}:${chat.accountId}:${chat.id}`;
     const existing = chatMap.get(key);
     if (!existing || (chat.lastMessageAt || 0) > (existing.lastMessageAt || 0)) {
       chatMap.set(key, chat);
@@ -448,6 +477,29 @@ export async function scanAllSessions(
             allChats.push(...chats);
           }
         }
+      }
+    }
+  }
+  
+  // ✅ 新增：扫描所有 agent 目录（包括不匹配任何渠道的 agent，如 main）
+  const agentsDir = path.join(openclawDir, 'agents');
+  if (fs.existsSync(agentsDir)) {
+    const agentDirs = fs.readdirSync(agentsDir, { withFileTypes: true })
+      .filter(d => d.isDirectory())
+      .map(d => d.name);
+    
+    for (const agentName of agentDirs) {
+      // 检查是否已经被扫描过
+      const alreadyScanned = channels.some(ch => 
+        ch.accounts?.some(acc => acc.id === agentName) || agentName.includes(ch.id)
+      );
+      
+      // 如果没有被扫描过，则扫描
+      if (!alreadyScanned) {
+        // 对于 main agent，使用 'main' 作为渠道 ID
+        const channelId = agentName === 'main' ? 'main' : agentName;
+        const chats = await scanChannelSessions(openclawDir, channelId, agentName);
+        allChats.push(...chats);
       }
     }
   }
@@ -548,12 +600,96 @@ export async function getChatMessages(
     }
   }
   
-  // 按时间戳排序（最早的在前面）
-  allMessages.sort((a, b) => a.timestamp - b.timestamp);
+  // 按时间戳排序（最新的在前面）
+  allMessages.sort((a, b) => b.timestamp - a.timestamp);
   
-  // 应用分页
+  // 应用分页（offset=0 返回最新的消息）
   const pagedMessages = allMessages.slice(offset, offset + limit);
   
-  console.log(`[Chat] Loaded ${pagedMessages.length} messages (total: ${allMessages.length})`);
+  console.log(`[Chat] Loaded ${pagedMessages.length} messages (total: ${allMessages.length}, offset: ${offset})`);
   return pagedMessages;
+}
+
+/**
+ * 使用 tail 命令读取大文件的最后部分消息
+ * 优化性能，避免解析整个文件
+ */
+async function getMessagesWithTail(sessionFile: string, count: number): Promise<Message[]> {
+  const { execSync } = require('child_process');
+  
+  try {
+    // 使用 tail 读取最后 count * 2 行（因为有些行可能不是消息）
+    const lines = execSync(`tail -n ${count * 2} "${sessionFile}"`, { 
+      encoding: 'utf-8',
+      maxBuffer: 50 * 1024 * 1024  // 50MB buffer
+    }).split('\n').filter((l: string) => l.trim());
+    
+    const messages: Message[] = [];
+    
+    for (const line of lines) {
+      try {
+        const msg = JSON.parse(line);
+        
+        // OpenClaw 格式
+        if (msg.type === 'message' && msg.message) {
+          const timestamp = msg.message.timestamp 
+            ? (typeof msg.message.timestamp === 'number' ? msg.message.timestamp : new Date(msg.message.timestamp).getTime())
+            : (msg.timestamp ? new Date(msg.timestamp).getTime() : Date.now());
+          
+          messages.push({
+            id: msg.id || `${timestamp}-${messages.length}`,
+            runId: msg.runId || '',
+            role: msg.message.role || 'user',
+            content: msg.message.content || [],
+            timestamp,
+          });
+        }
+        // 兼容其他格式...
+        else if (msg.user !== undefined || msg.assistant !== undefined) {
+          const timestamp = msg.timestamp ? new Date(msg.timestamp).getTime() : Date.now();
+          if (msg.user) {
+            messages.push({
+              id: `${msg.id || timestamp}-user`,
+              runId: '',
+              role: 'user',
+              content: parseContent(msg.user),
+              timestamp,
+            });
+          }
+          if (msg.assistant) {
+            messages.push({
+              id: `${msg.id || timestamp}-assistant`,
+              runId: '',
+              role: 'assistant',
+              content: parseContent(msg.assistant),
+              timestamp,
+            });
+          }
+        }
+        else if (msg.role) {
+          const timestamp = msg.timestamp ? new Date(msg.timestamp).getTime() : Date.now();
+          messages.push({
+            id: msg.id || `${timestamp}-${messages.length}`,
+            runId: msg.runId || '',
+            role: msg.role,
+            content: parseContent(msg.content || msg.message),
+            timestamp,
+          });
+        }
+      } catch (e) {
+        // 忽略解析错误
+      }
+    }
+    
+    // 按时间戳排序
+    messages.sort((a, b) => a.timestamp - b.timestamp);
+    
+    // 返回最后 count 条消息
+    const result = messages.slice(-count);
+    console.log(`[Chat] Loaded ${result.length} messages from tail (file: ${sessionFile})`);
+    return result;
+  } catch (e) {
+    console.error(`[Chat] Tail failed:`, e);
+    return [];
+  }
 }

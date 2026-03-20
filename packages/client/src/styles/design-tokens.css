@@ -1,0 +1,172 @@
+/* ==================== Design System (design-system-creation) ==================== */
+/* 
+ * OpenClaw Monitor Design Tokens
+ * 基于 design-system-creation 方法论创建
+ */
+
+/* ==================== 1. 美学基础 ==================== */
+/*
+ * The Vibe: 专业、现代、有深度
+ * Inspirations: 
+ *   - Linear.app (深色模式、精致阴影)
+ *   - Vercel Dashboard (简洁、专业)
+ * Emotions to Evoke:
+ *   | 专业感 | 通过精致的阴影和间距 |
+ *   | 现代感 | OKLCH 色彩、大圆角 |
+ *   | 可靠感 | 稳定的布局、一致的交互 |
+ */
+
+:root {
+  /* ==================== 2. 色彩令牌系统 ==================== */
+  
+  /* Primary - 蓝色调 */
+  --tone-primary: 55, 120, 255;
+  --primary: 220 90% 60%;
+  --primary-hover: 220 90% 55%;
+  
+  /* Success - 绿色调 */
+  --success: 150 80% 50%;
+  
+  /* Warning - 橙色调 */
+  --warning: 40 90% 55%;
+  
+  /* Destructive - 红色调 */
+  --destructive: 350 80% 55%;
+  
+  /* Neutral - 带蓝调的灰色 */
+  --gray-50: 96% 0.005 250;
+  --gray-100: 94% 0.005 250;
+  --gray-200: 88% 0.005 250;
+  --gray-300: 75% 0.01 250;
+  --gray-400: 60% 0.01 250;
+  --gray-500: 50% 0.01 250;
+  --gray-600: 40% 0.02 250;
+  --gray-700: 30% 0.02 250;
+  --gray-800: 20% 0.02 250;
+  --gray-900: 15% 0.02 250;
+  
+  /* Surface layers */
+  --surface-base: oklch(96% 0.005 250);
+  --surface-elevated: oklch(99% 0.002 250);
+  --surface-overlay: oklch(99% 0.002 250 / 0.95);
+  
+  /* ==================== 3. 排版系统 ==================== */
+  
+  /* Font families */
+  --font-display: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-sans: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Monaco', 'Menlo', monospace;
+  
+  /* Typography scale (1.25 ratio) */
+  --text-xs: 0.75rem;      /* 12px */
+  --text-sm: 0.875rem;     /* 14px */
+  --text-base: 1rem;       /* 16px */
+  --text-lg: 1.125rem;     /* 18px */
+  --text-xl: 1.25rem;      /* 20px */
+  --text-2xl: 1.5rem;      /* 24px */
+  
+  /* Line heights */
+  --leading-tight: 1.25;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.75;
+  
+  /* Letter spacing */
+  --tracking-tight: -0.025em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.025em;
+  
+  /* ==================== 4. 间距系统 (8px base) ==================== */
+  
+  --space-1: 0.25rem;   /* 4px */
+  --space-2: 0.5rem;    /* 8px */
+  --space-3: 0.75rem;   /* 12px */
+  --space-4: 1rem;      /* 16px */
+  --space-5: 1.25rem;   /* 20px */
+  --space-6: 1.5rem;    /* 24px */
+  --space-8: 2rem;      /* 32px */
+  --space-10: 2.5rem;   /* 40px */
+  --space-12: 3rem;     /* 48px */
+  
+  /* ==================== 5. 圆角系统 ==================== */
+  
+  --radius-sm: 0.375rem;  /* 6px */
+  --radius-md: 0.5rem;    /* 8px */
+  --radius-lg: 0.75rem;   /* 12px */
+  --radius-xl: 1rem;      /* 16px */
+  --radius-2xl: 1.5rem;   /* 24px */
+  --radius-full: 9999px;
+  
+  /* ==================== 6. 阴影系统 (多层阴影) ==================== */
+  
+  --shadow-xs: 
+    0 1px 2px oklch(0% 0 0 / 0.04);
+  
+  --shadow-sm: 
+    0 1px 2px oklch(0% 0 0 / 0.04),
+    0 2px 4px oklch(0% 0 0 / 0.04);
+  
+  --shadow-md: 
+    0 2px 4px oklch(0% 0 0 / 0.04),
+    0 4px 8px oklch(0% 0 0 / 0.04);
+  
+  --shadow-lg: 
+    0 4px 8px oklch(0% 0 0 / 0.04),
+    0 8px 16px oklch(0% 0 0 / 0.04),
+    0 16px 32px oklch(0% 0 0 / 0.02);
+  
+  /* ==================== 7. 动效令牌 ==================== */
+  
+  /* Easing */
+  --ease-in-out: cubic-bezier(0.16, 1, 0.3, 1);  /* 快入慢出 */
+  --ease-out: cubic-bezier(0.33, 1, 0.68, 1);
+  --ease-in: cubic-bezier(0.32, 0, 0.67, 0);
+  
+  /* Duration */
+  --duration-fast: 150ms;
+  --duration-normal: 200ms;
+  --duration-slow: 300ms;
+  
+  /* ==================== 8. 布局令牌 ==================== */
+  
+  /* Content width */
+  --content-xs: 40ch;
+  --content-sm: 60ch;
+  --content-md: 80ch;
+  --content-lg: 100ch;
+  
+  /* Sidebar width */
+  --sidebar-sm: 280px;
+  --sidebar-md: 320px;
+  --sidebar-lg: 400px;
+  
+  /* Header height */
+  --header-height: 64px;
+  
+  /* Z-index */
+  --z-base: 0;
+  --z-elevated: 10;
+  --z-dropdown: 100;
+  --z-modal: 1000;
+  --z-toast: 2000;
+}
+
+/* ==================== 深色模式 (可选) ==================== */
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface-base: oklch(12% 0.02 250);
+    --surface-elevated: oklch(16% 0.02 250);
+    --surface-overlay: oklch(18% 0.02 250 / 0.95);
+    
+    --gray-50: 20% 0.02 250;
+    --gray-100: 25% 0.02 250;
+    --gray-200: 35% 0.02 250;
+    --gray-300: 45% 0.01 250;
+    --gray-400: 55% 0.01 250;
+    --gray-500: 65% 0.01 250;
+    --gray-600: 75% 0.005 250;
+    --gray-700: 85% 0.005 250;
+    --gray-800: 92% 0.003 250;
+    --gray-900: 97% 0.002 250;
+  }
+}

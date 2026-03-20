@@ -8,6 +8,8 @@
  */
 
 import Database from 'better-sqlite3';
+import fs from 'fs';
+import path from 'path';
 import type { Channel, Chat, Operation, LLMOperation, ToolOperation } from '../types';
 
 let db: Database.Database | null = null;
@@ -412,4 +414,262 @@ export function getDBStats(): {
   const operations = (db.prepare(`SELECT COUNT(*) as count FROM operations`).get() as any)?.count || 0;
   
   return { channels, chats, runs, operations };
+}
+
+// ==================== 账号管理 ====================
+
+export interface Account {
+  channelId: string;
+  accountId: string;
+  channelName: string;
+  accountName: string;
+  chatCount: number;
+  lastActivity: number | null;
+}
+
+/**
+ * 获取所有账号（从聊天数据聚合）
+ */
+export function getAccounts(): Account[] {
+  if (!db) throw new Error('Database not initialized');
+  
+  const stmt = db.prepare(`
+    SELECT 
+      channel_id,
+      account_id,
+      session_file,
+      COUNT(*) as chat_count,
+      MAX(last_message_at) as last_activity
+    FROM chats
+    WHERE is_hidden = 0
+    GROUP BY channel_id, account_id
+    ORDER BY channel_id, account_id
+  `);
+  
+  const rows = stmt.all() as any[];
+  
+  // 渠道名称映射
+  const channelNames: Record<string, string> = {
+    'qqbot': 'QQ',
+    'feishu': '飞书',
+    'telegram': 'Telegram',
+    'discord': 'Discord',
+    'signal': 'Signal',
+    'whatsapp': 'WhatsApp',
+  };
+  
+  // 从 OpenClaw 配置读取账号名称映射
+  const agentNames = loadAgentNames();
+  
+  // 从 session_file 提取 agentId 并映射到名称
+  const extractAgentId = (sessionFile: string): string | null => {
+    // /root/.openclaw/agents/mime-qq/sessions/xxx.jsonl -> mime-qq
+    const match = sessionFile?.match(/\/agents\/([^\/]+)\/sessions\//);
+    return match ? match[1] : null;
+  };
+  
+  return rows.map(row => {
+    const agentId = extractAgentId(row.session_file);
+    const accountName = (agentId && agentNames[agentId]) || row.account_id;
+    
+    return {
+      channelId: row.channel_id,
+      accountId: row.account_id,
+      channelName: channelNames[row.channel_id] || row.channel_id,
+      accountName,
+      chatCount: row.chat_count,
+      lastActivity: row.last_activity,
+    };
+  });
+}
+
+/**
+ * 从 OpenClaw 配置加载 agent 名称映射
+ * agentId -> name
+ */
+function loadAgentNames(): Record<string, string> {
+  const fs = require('fs');
+  const path = require('path');
+  
+  const configPath = path.join(process.env.OPENCLAW_DIR || '/root/.openclaw', 'openclaw.json');
+  
+  try {
+    if (!fs.existsSync(configPath)) {
+      return {};
+    }
+    
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    const agents = config.agents?.list || [];
+    
+    // 构建 agentId -> name 的映射
+    const result: Record<string, string> = {};
+    for (const agent of agents) {
+      if (agent.id && agent.name) {
+        result[agent.id] = agent.name;
+      }
+    }
+    
+    return result;
+  } catch (e) {
+    return {};
+  }
+}
+
+// ==================== Session 文件同步 ====================
+
+export interface SyncResult {
+  added: number;
+  removed: number;
+  unchanged: number;
+  errors: string[];
+}
+
+/**
+ * 同步 chats 表与 session 文件
+ * 
+ * 逻辑：
+ * 1. 扫描所有 session 文件
+ * 2. 文件有，表没有 → 新增
+ * 3. 文件没有，表有 → 删除
+ */
+export function syncChatsWithSessionFiles(
+  openclawDir: string,
+  channels: Array<{ id: string; accounts: Array<{ id: string }> }>
+): SyncResult {
+  if (!db) throw new Error('Database not initialized');
+  
+  const result: SyncResult = {
+    added: 0,
+    removed: 0,
+    unchanged: 0,
+    errors: [],
+  };
+  
+  const agentsDir = path.join(openclawDir, 'agents');
+  
+  if (!fs.existsSync(agentsDir)) {
+    result.errors.push('Agents directory not found');
+    return result;
+  }
+  
+  // 1. 扫描所有 session 文件
+  const sessionFiles = new Set<string>();
+  const fileToSessionId = new Map<string, string>();
+  
+  const agentDirs = fs.readdirSync(agentsDir, { withFileTypes: true })
+    .filter(d => d.isDirectory())
+    .map(d => d.name);
+  
+  for (const agentName of agentDirs) {
+    const sessionDir = path.join(agentsDir, agentName, 'sessions');
+    if (!fs.existsSync(sessionDir)) continue;
+    
+    const files = fs.readdirSync(sessionDir)
+      .filter(f => f.endsWith('.jsonl'));
+    
+    for (const file of files) {
+      const filePath = path.join(sessionDir, file);
+      const sessionId = file.replace('.jsonl', '');
+      sessionFiles.add(filePath);
+      fileToSessionId.set(filePath, sessionId);
+    }
+  }
+  
+  console.log(`[Sync] Found ${sessionFiles.size} session files`);
+  
+  // 2. 获取数据库中所有 chats 的 session_file
+  const stmt = db.prepare(`SELECT chat_id, session_file FROM chats`);
+  const dbChats = stmt.all() as any[];
+  const dbSessionFiles = new Map<string, string>();
+  
+  for (const chat of dbChats) {
+    if (chat.session_file) {
+      dbSessionFiles.set(chat.session_file, chat.chat_id);
+    }
+  }
+  
+  console.log(`[Sync] Found ${dbSessionFiles.size} chats in database`);
+  
+  // 3. 找出需要新增的（文件有，表没有）
+  const toAdd = new Set<string>();
+  for (const filePath of sessionFiles) {
+    if (!dbSessionFiles.has(filePath)) {
+      toAdd.add(filePath);
+    }
+  }
+  
+  // 4. 找出需要删除的（文件没有，表有）
+  const toRemove = new Set<string>();
+  for (const [filePath, chatId] of dbSessionFiles) {
+    if (!sessionFiles.has(filePath)) {
+      toRemove.add(chatId);
+    }
+  }
+  
+  console.log(`[Sync] To add: ${toAdd.size}, To remove: ${toRemove.size}`);
+  
+  // 5. 执行新增（这里只是标记，实际的解析由 chat.scanAllSessions 完成）
+  // 由于新增需要解析文件内容，我们只记录数量
+  result.added = toAdd.size;
+  
+  // 6. 执行删除
+  if (toRemove.size > 0) {
+    const deleteStmt = db.prepare(`DELETE FROM chats WHERE chat_id = ?`);
+    for (const chatId of toRemove) {
+      try {
+        deleteStmt.run(chatId);
+        result.removed++;
+      } catch (e) {
+        result.errors.push(`Failed to delete chat ${chatId}: ${e}`);
+      }
+    }
+  }
+  
+  result.unchanged = sessionFiles.size - toAdd.size;
+  
+  return result;
+}
+
+/**
+ * 清理孤立的 chats 记录（session 文件不存在）
+ */
+export function cleanOrphanedChats(openclawDir: string): number {
+  if (!db) throw new Error('Database not initialized');
+  
+  const agentsDir = path.join(openclawDir, 'agents');
+  const existingFiles = new Set<string>();
+  
+  if (fs.existsSync(agentsDir)) {
+    const agentDirs = fs.readdirSync(agentsDir, { withFileTypes: true })
+      .filter(d => d.isDirectory())
+      .map(d => d.name);
+    
+    for (const agentName of agentDirs) {
+      const sessionDir = path.join(agentsDir, agentName, 'sessions');
+      if (!fs.existsSync(sessionDir)) continue;
+      
+      const files = fs.readdirSync(sessionDir)
+        .filter(f => f.endsWith('.jsonl'));
+      
+      for (const file of files) {
+        existingFiles.add(path.join(sessionDir, file));
+      }
+    }
+  }
+  
+  // 获取所有 chats
+  const stmt = db.prepare(`SELECT chat_id, session_file FROM chats WHERE session_file IS NOT NULL`);
+  const chats = stmt.all() as any[];
+  
+  let removed = 0;
+  const deleteStmt = db.prepare(`DELETE FROM chats WHERE chat_id = ?`);
+  
+  for (const chat of chats) {
+    if (chat.session_file && !existingFiles.has(chat.session_file)) {
+      deleteStmt.run(chat.chat_id);
+      removed++;
+    }
+  }
+  
+  return removed;
 }

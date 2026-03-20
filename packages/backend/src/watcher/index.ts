@@ -30,7 +30,8 @@ export function startMessageWatcher(
   
   onNewMessage = options.onNewMessage || null;
   
-  messageWatcher = chokidar.watch(`${sessionsDir}/*.jsonl`, {
+  // ✅ 使用 **/*.jsonl 递归监听所有子目录
+  messageWatcher = chokidar.watch(`${sessionsDir}/**/*.jsonl`, {
     persistent: true,
     ignoreInitial: true,
     awaitWriteFinish: {
@@ -50,10 +51,9 @@ export function startMessageWatcher(
   messageWatcher.on('change', async (filePath: string) => {
     console.log(`[MessageWatcher] File changed: ${filePath}`);
     try {
-      // 读取最新的一行
-      const content = await fs.promises.readFile(filePath, 'utf-8');
-      const lines = content.trim().split('\n');
-      const lastLine = lines[lines.length - 1];
+      // ✅ 使用 tail 读取最后一行（避免读取整个大文件）
+      const { execSync } = require('child_process');
+      const lastLine = execSync(`tail -n 1 "${filePath}"`, { encoding: 'utf-8' }).trim();
       
       if (lastLine) {
         const msg = JSON.parse(lastLine);
@@ -74,7 +74,7 @@ export function startMessageWatcher(
     console.error(`[MessageWatcher] Error:`, error);
   });
   
-  console.log(`[MessageWatcher] Started watching: ${sessionsDir}`);
+  console.log(`[MessageWatcher] Started watching: ${sessionsDir}/**/*.jsonl`);
   
   return messageWatcher;
 }

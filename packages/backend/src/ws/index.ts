@@ -90,11 +90,15 @@ export function broadcast(type: WSMessage['type'], data: Run): number {
   const messageStr = JSON.stringify(message);
   const failedConnections: WebSocketType[] = [];
   
+  console.log(`[WS] Broadcasting to ${connections.size} connections: ${type}`);
+  
   for (const [ws] of connections) {
     try {
       if (ws.readyState === WebSocketOPEN) {
         ws.send(messageStr);
+        console.log(`[WS] Sent message to connection, seq=${seq}`);
       } else {
+        console.log(`[WS] Connection not open, readyState=${ws.readyState}`);
         failedConnections.push(ws);
       }
     } catch (e) {
@@ -285,24 +289,20 @@ export function cleanupDeadConnections(): number {
 /**
  * ✅ 安全：WebSocket 路由处理器（带 token 认证）
  */
-export function createWSHandler() {
+export function createWSHandler(token: string | null) {
   return {
     onOpen: (event: Event, ws: any) => {
       // ✅ 安全：验证 token（如果配置了 API_KEY）
       if (API_KEY) {
-        // 从 URL 参数获取 token
-        // 注意：Hono 的 WebSocket 可能需要不同的方式获取 URL
-        // 这里假设通过自定义 header 或连接时传递
-        const url = (event as any).url || '';
-        const token = new URL(url, 'http://localhost').searchParams.get('token');
-        
         if (token !== API_KEY) {
+          console.log('[WS] Unauthorized connection attempt, token:', token?.substring(0, 8) + '...');
           ws.send(JSON.stringify({ type: 'error', message: 'Unauthorized' }));
           ws.terminate?.();
           return;
         }
       }
       
+      console.log('[WS] Connection authorized');
       addConnection(ws);
     },
     

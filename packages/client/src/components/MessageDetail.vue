@@ -1,24 +1,86 @@
 <template>
   <div class="message-detail">
-    <div class="message-header">
-      <h3>{{ chatTitle }}</h3>
-      <span class="session-info">{{ chatId }}</span>
+    <!-- Header -->
+    <div class="detail-header">
+      <div class="header-info">
+        <h3 class="header-title">{{ chat?.title || '聊天详情' }}</h3>
+        <div class="header-session">{{ chat?.sessionKey }}</div>
+      </div>
+      <span class="message-count">{{ total }} 条消息</span>
     </div>
-    
-    <div class="message-list" ref="messageList">
-      <div v-if="loading" class="loading">加载中...</div>
-      <div v-else-if="messages.length === 0" class="empty">暂无消息</div>
-      <div v-else>
-        <div v-for="(message, index) in messages" :key="message.id || index" class="message" :class="message.role">
+
+    <!-- Messages -->
+    <div class="message-list" ref="messageListRef">
+      <!-- Initial Loading -->
+      <div v-if="loading && messages.length === 0" class="loading-state">
+        <div class="skeleton-message"></div>
+        <div class="skeleton-message"></div>
+      </div>
+
+      <!-- Empty -->
+      <div v-else-if="messages.length === 0" class="empty-state">
+        暂无消息
+      </div>
+
+      <!-- Messages -->
+      <div v-else class="messages">
+        <!-- Load More (at top) -->
+        <div v-if="hasMore" class="load-more" :class="{ 'loading': isLoadingMore }" @click="loadMore">
+          <span v-if="isLoadingMore" class="loading-spinner">⟳</span>
+          <span>{{ isLoadingMore ? '加载中...' : '↑ 加载更早的消息' }}</span>
+        </div>
+        
+        <div 
+          v-for="msg in messages" 
+          :key="msg.id"
+          class="message"
+          :class="msg.role"
+        >
           <div class="message-header">
-            <span class="role" :class="message.role">
-              {{ getRoleLabel(message.role) }}
+            <span class="message-role" :class="msg.role">
+              {{ msg.role === 'user' ? '用户' : '助手' }}
             </span>
-            <span class="time">{{ formatTime(message.timestamp) }}</span>
+            <span class="message-time">{{ formatTime(msg.timestamp) }}</span>
           </div>
           
+          <!-- 渲染消息内容 -->
           <div class="message-content">
-            <div v-if="message.content" class="text-content" v-html="formatContent(message.content)"></div>
+            <template v-if="typeof msg.content === 'string'">
+              <div v-html="renderMarkdown(msg.content)"></div>
+            </template>
+            <template v-else-if="Array.isArray(msg.content)">
+              <div v-for="(block, idx) in msg.content" :key="idx" class="content-block" :class="block.type">
+                <div v-if="block.type === 'text'" v-html="renderMarkdown(block.text)"></div>
+                <div v-else-if="block.type === 'thinking'" class="thinking-block">
+                  <div class="thinking-header" @click="toggleThinking(msg.id + '-' + idx)">
+                    <span class="thinking-icon">💭</span>
+                    <span class="thinking-label">思考过程</span>
+                    <span class="thinking-toggle">{{ expandedThinkings.has(msg.id + '-' + idx) ? '▼' : '▶' }}</span>
+                  </div>
+                  <div v-if="expandedThinkings.has(msg.id + '-' + idx)" class="thinking-content" v-html="renderMarkdown(block.thinking || block.text)"></div>
+                </div>
+                <div v-else-if="block.type === 'toolCall'" class="tool-call-block">
+                  <div class="tool-header">
+                    <span class="tool-icon">🔧</span>
+                    <span class="tool-name">{{ block.name }}</span>
+                  </div>
+                  <pre class="tool-arguments">{{ JSON.stringify(block.arguments, null, 2) }}</pre>
+                </div>
+                <div v-else-if="block.type === 'toolResult'" class="tool-result-block">
+                  <div class="result-header">
+                    <span class="result-icon">📋</span>
+                    <span class="result-label">工具结果</span>
+                  </div>
+                  <pre class="result-content">{{ typeof block.content === 'string' ? block.content : JSON.stringify(block.content, null, 2) }}</pre>
+                </div>
+              </div>
+            </template>
+          </div>
+          
+          <div v-if="msg.attachments?.length" class="attachments">
+            <span v-for="att in msg.attachments" :key="att.url" class="attachment-tag" :class="att.type">
+              {{ att.type }}: {{ att.name }}
+            </span>
           </div>
         </div>
       </div>
@@ -27,56 +89,77 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue';
+import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue';
 import { fetchMessages } from '../services/api';
 import MarkdownIt from 'markdown-it';
 
-const md = new MarkdownIt({
-  html: false,
-  linkify: true,
-  typographer: true,
-  breaks: true,
-});
+// 支持字符串或数组格式的 content
+interface ContentBlock {
+  type: 'text' | 'thinking' | 'toolCall' | 'toolResult';
+  text?: string;
+  thinking?: string;
+  name?: string;
+  arguments?: any;
+  content?: any;
+}
 
 interface Message {
   id: string;
-  role: 'user' | 'assistant' | 'toolResult';
-  content: any;
+  role: 'user' | 'assistant' | 'system';
+  content: string | ContentBlock[];
   timestamp: number;
+  attachments?: { type: string; name: string; url: string }[];
 }
 
 const props = defineProps<{
   chatId: string;
-  sessionFile?: string;
+  sessionFile: string;
 }>();
 
+const chat = ref<any>(null);
 const messages = ref<Message[]>([]);
 const loading = ref(false);
-const messageList = ref<HTMLElement | null>(null);
+const isLoadingMore = ref(false);  // 区分初始加载和加载更多
+const total = ref(0);
+const offset = ref(0);
+const hasMore = ref(true);
+const messageListRef = ref<HTMLElement | null>(null);
+const expandedThinkings = ref<Set<string>>(new Set());
 
-const chatTitle = computed(() => {
-  if (!props.chatId) return '';
-  const parts = props.chatId.split(':');
-  if (parts.length >= 2) {
-    return `${parts[0]} - ${parts[1].substring(0, 8)}...`;
-  }
-  return props.chatId;
+const md = new MarkdownIt({
+  html: false,
+  linkify: true,
+  breaks: true,
 });
+
+function renderMarkdown(content: string): string {
+  return md.render(content || '');
+}
+
+function toggleThinking(key: string) {
+  if (expandedThinkings.value.has(key)) {
+    expandedThinkings.value.delete(key);
+  } else {
+    expandedThinkings.value.add(key);
+  }
+}
 
 async function loadMessages() {
   if (!props.chatId) return;
   
   loading.value = true;
   try {
-    const data = await fetchMessages(props.chatId);
-    messages.value = data.messages || [];
+    // 后端返回降序（最新的在前），需要反转为升序显示
+    const limit = 20;
+    const data = await fetchMessages(props.chatId, limit, 0);
+    // 反转消息顺序，让最新的显示在底部
+    messages.value = (data.messages || []).reverse();
+    total.value = data.total || 0;
+    offset.value = limit;
+    hasMore.value = messages.value.length < total.value;
     
-    // 滚动到底部
-    setTimeout(() => {
-      if (messageList.value) {
-        messageList.value.scrollTop = messageList.value.scrollHeight;
-      }
-    }, 100);
+    // 加载完成后滚动到底部
+    scrollToBottom();
   } catch (error) {
     console.error('Failed to load messages:', error);
   } finally {
@@ -84,275 +167,523 @@ async function loadMessages() {
   }
 }
 
-function getRoleLabel(role: string) {
-  const labels: Record<string, string> = {
-    user: '用户',
-    assistant: '助手',
-    toolResult: '工具结果'
-  };
-  return labels[role] || role;
+async function loadMore() {
+  if (!hasMore.value || isLoadingMore.value) return;
+  
+  // 记住当前滚动位置
+  const oldScrollHeight = messageListRef.value?.scrollHeight || 0;
+  
+  isLoadingMore.value = true;
+  try {
+    // 加载更早的消息（后端返回降序）
+    const limit = 20;
+    const data = await fetchMessages(props.chatId, limit, offset.value);
+    const olderMessages = data.messages || [];
+    
+    if (olderMessages.length > 0) {
+      // 反转后添加到开头（保持升序显示）
+      messages.value = [...olderMessages.reverse(), ...messages.value];
+      offset.value += limit;
+      hasMore.value = olderMessages.length === limit;
+      
+      // 保持滚动位置（防止跳动）
+      nextTick(() => {
+        if (messageListRef.value) {
+          const newScrollHeight = messageListRef.value.scrollHeight;
+          messageListRef.value.scrollTop = newScrollHeight - oldScrollHeight;
+        }
+      });
+    } else {
+      hasMore.value = false;
+    }
+  } catch (error) {
+    console.error('Failed to load more messages:', error);
+  } finally {
+    isLoadingMore.value = false;
+  }
 }
 
-function formatTime(timestamp: number) {
-  if (!timestamp) return '';
-  return new Date(timestamp).toLocaleString('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit'
+function appendMessage(msg: Message) {
+  messages.value.push(msg);
+  total.value++;
+  scrollToBottom();
+}
+
+function refresh() {
+  offset.value = 0;
+  hasMore.value = true;
+  messages.value = [];
+  total.value = 0;
+  loadMessages();
+}
+
+function scrollToBottom() {
+  nextTick(() => {
+    setTimeout(() => {
+      if (messageListRef.value) {
+        messageListRef.value.scrollTop = messageListRef.value.scrollHeight;
+        console.log('[MessageDetail] Scrolled to bottom:', {
+          scrollTop: messageListRef.value.scrollTop,
+          scrollHeight: messageListRef.value.scrollHeight
+        });
+      }
+    }, 100); // 延迟 100ms 确保消息已渲染
   });
 }
 
-function formatContent(content: any): string {
-  if (typeof content === 'string') {
-    // 先渲染 Markdown
-    let html = md.render(content);
-    
-    // 渲染后处理被转义的特殊标签
-    html = html
-      .replace(/&lt;qqfile&gt;([^&]+)&lt;\/qqfile&gt;/g, '<span class="tag file">📎 文件: $1</span>')
-      .replace(/&lt;qqimg&gt;([^&]+)&lt;\/qqimg&gt;/g, '<span class="tag image">🖼️ 图片: $1</span>')
-      .replace(/&lt;qqvoice&gt;([^&]+)&lt;\/qqvoice&gt;/g, '<span class="tag voice">🔊 语音: $1</span>')
-      .replace(/&lt;qqvideo&gt;([^&]+)&lt;\/qqvideo&gt;/g, '<span class="tag video">🎬 视频: $1</span>');
-    
-    return html;
-  }
+// 滚动监听：滚动到顶部时自动加载更多
+function handleScroll() {
+  if (!messageListRef.value || isLoadingMore.value || !hasMore.value) return;
   
-  if (Array.isArray(content)) {
-    return content.map(item => {
-      if (item.type === 'text') {
-        return md.render(item.text || '');
-      }
-      return `<span class="tag unknown">[${item.type}]</span>`;
-    }).join('');
-  }
+  const { scrollTop } = messageListRef.value;
   
-  return md.render(`\`\`\`json\n${JSON.stringify(content, null, 2)}\n\`\`\``);
+  // 滚动到顶部附近（小于 100px）时自动加载
+  if (scrollTop < 100) {
+    loadMore();
+  }
 }
 
-function escapeHtml(text: string): string {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
+function formatTime(timestamp: number): string {
+  if (!timestamp) return '';
+  const date = new Date(timestamp);
+  return date.toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
+
+defineExpose({
+  refresh,
+  appendMessage,
+});
 
 watch(() => props.chatId, () => {
+  offset.value = 0;
+  hasMore.value = true;
+  messages.value = [];
   loadMessages();
 });
 
 onMounted(() => {
   loadMessages();
+  
+  // 添加滚动监听
+  if (messageListRef.value) {
+    messageListRef.value.addEventListener('scroll', handleScroll);
+  }
+});
+
+onUnmounted(() => {
+  // 移除滚动监听
+  if (messageListRef.value) {
+    messageListRef.value.removeEventListener('scroll', handleScroll);
+  }
 });
 </script>
 
 <style scoped>
+/* ==================== QQ 风格消息详情 ==================== */
+/* 无圆角，紧凑布局 */
+
 .message-detail {
   height: 100%;
   display: flex;
   flex-direction: column;
+  background: oklch(97% 0.005 250);
 }
 
-.message-header {
-  padding: 16px 20px;
-  border-bottom: 1px solid #f0f0f0;
-  background: #fff;
-}
-
-.message-header h3 {
-  font-size: 16px;
-  font-weight: 600;
-  margin: 0 0 4px 0;
-  color: #333;
-}
-
-.session-info {
-  font-size: 12px;
-  color: #999;
-}
-
-.message-list {
-  flex: 1;
-  overflow-y: auto;
-  padding: 16px;
-  background: #f8f9fa;
-}
-
-.loading, .empty {
-  text-align: center;
-  padding: 24px;
-  color: #999;
-}
-
-.message {
-  margin-bottom: 12px;
-  padding: 14px 16px;
-  border-radius: 12px;
-  background: #fff;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-}
-
-.message.user {
-  background: #e8f4fd;
-  border-left: 3px solid #1976d2;
-}
-
-.message.assistant {
-  background: #fff;
-  border-left: 3px solid #9c27b0;
-}
-
-.message .message-header {
+/* Header */
+.detail-header {
+  height: 56px;
+  padding: 0 16px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 10px;
-  padding: 0;
-  border: none;
-  background: transparent;
+  background: oklch(99% 0.002 250);
+  border-bottom: 1px solid oklch(92% 0.005 250);
+  
+  /* 无圆角 */
+  border-radius: 0;
 }
 
-.role {
-  font-size: 12px;
-  font-weight: 600;
-  color: #666;
+.header-info {
+  display: flex;
+  flex-direction: column;
 }
 
-.role.user {
-  color: #1976d2;
-}
-
-.role.assistant {
-  color: #9c27b0;
-}
-
-.time {
-  font-size: 11px;
-  color: #999;
-}
-
-.text-content {
+.header-title {
   font-size: 14px;
-  line-height: 1.7;
-  color: #333;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans SC', 'Noto Color Emoji', 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif;
-}
-
-/* Markdown 渲染样式 */
-.text-content :deep(h1),
-.text-content :deep(h2),
-.text-content :deep(h3) {
-  margin: 16px 0 8px 0;
   font-weight: 600;
-  color: #333;
+  color: oklch(25% 0.02 250);
+  margin: 0;
 }
 
-.text-content :deep(h2) {
-  font-size: 16px;
-  border-bottom: 1px solid #e0e0e0;
-  padding-bottom: 8px;
+.header-session {
+  font-size: 11px;
+  color: oklch(50% 0.01 250);
+  margin-top: 2px;
 }
 
-.text-content :deep(table) {
-  width: 100%;
-  border-collapse: collapse;
-  margin: 12px 0;
-  font-size: 13px;
-}
-
-.text-content :deep(th),
-.text-content :deep(td) {
-  border: 1px solid #e0e0e0;
-  padding: 8px 12px;
-  text-align: left;
-}
-
-.text-content :deep(th) {
-  background: #f5f5f5;
+.message-count {
+  font-size: 11px;
   font-weight: 600;
+  color: oklch(50% 0.01 250);
+  background: oklch(94% 0.005 250);
+  padding: 2px 8px;
+  border-radius: 10px;
 }
 
-.text-content :deep(code) {
-  background: #f5f5f5;
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
-  font-size: 13px;
-}
-
-.text-content :deep(pre) {
-  background: #f5f5f5;
+/* Message List */
+.message-list {
+  flex: 1;
+  overflow-y: auto;
   padding: 12px;
+}
+
+.load-more {
+  text-align: center;
+  padding: 12px;
+  margin-bottom: 12px;
+  cursor: pointer;
+  color: oklch(55% 0.18 250);
+  font-size: 12px;
+  background: oklch(98% 0.005 250);
   border-radius: 8px;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.load-more:hover {
+  background: oklch(96% 0.01 250);
+}
+
+.load-more.loading {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.loading-spinner {
+  display: inline-block;
+  animation: spin 1s linear infinite;
+  font-size: 14px;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.loading-state {
+  padding: 12px;
+}
+
+.skeleton-message {
+  height: 80px;
+  background: oklch(96% 0.005 250);
+  margin-bottom: 8px;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 0.3; }
+}
+
+.empty-state {
+  text-align: center;
+  padding: 32px;
+  color: oklch(50% 0.01 250);
+  font-size: 13px;
+}
+
+/* Message */
+.message {
+  margin-bottom: 8px;
+  padding: 10px 12px;
+  background: oklch(99% 0.002 250);
+  border-left: 3px solid oklch(75% 0.01 250);
+}
+
+.message.user {
+  background: oklch(96% 0.03 250);
+  border-left-color: oklch(55% 0.18 250);
+}
+
+.message.assistant {
+  border-left-color: oklch(60% 0.2 300);
+}
+
+.message-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.message-role {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: oklch(50% 0.01 250);
+}
+
+.message-role.user {
+  color: oklch(55% 0.18 250);
+}
+
+.message-role.assistant {
+  color: oklch(60% 0.2 300);
+}
+
+.message-time {
+  font-size: 11px;
+  color: oklch(50% 0.01 250);
+  font-variant-numeric: tabular-nums;
+}
+
+.message-content {
+  font-size: 13px;
+  line-height: 1.6;
+  color: oklch(25% 0.02 250);
+}
+
+.message-content :deep(p) {
+  margin: 4px 0;
+}
+
+.message-content :deep(code) {
+  background: oklch(94% 0.005 250);
+  padding: 1px 4px;
+  border-radius: 2px;
+  font-family: monospace;
+  font-size: 12px;
+}
+
+.message-content :deep(pre) {
+  background: oklch(94% 0.005 250);
+  padding: 8px;
+  border-radius: 4px;
   overflow-x: auto;
-  margin: 12px 0;
-}
-
-.text-content :deep(pre code) {
-  background: transparent;
-  padding: 0;
-}
-
-.text-content :deep(p) {
   margin: 8px 0;
 }
 
-.text-content :deep(ul),
-.text-content :deep(ol) {
+.message-content :deep(pre code) {
+  background: transparent;
+  padding: 0;
+}
+
+.message-content :deep(table) {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 8px 0;
+  font-size: 12px;
+}
+
+.message-content :deep(th),
+.message-content :deep(td) {
+  border: 1px solid oklch(88% 0.005 250);
+  padding: 6px 8px;
+  text-align: left;
+}
+
+/* 列表样式 */
+.message-content :deep(ol),
+.message-content :deep(ul) {
   margin: 8px 0;
   padding-left: 24px;
 }
 
-.text-content :deep(li) {
+.message-content :deep(ol) {
+  list-style-type: decimal;
+}
+
+.message-content :deep(ul) {
+  list-style-type: disc;
+}
+
+.message-content :deep(li) {
   margin: 4px 0;
+  line-height: 1.6;
 }
 
-.text-content :deep(blockquote) {
-  border-left: 3px solid #1976d2;
-  padding-left: 12px;
-  margin: 12px 0;
-  color: #666;
+.message-content :deep(li > ol),
+.message-content :deep(li > ul) {
+  margin: 4px 0;
+  padding-left: 20px;
 }
 
-.text-content :deep(hr) {
-  border: none;
-  border-top: 1px solid #e0e0e0;
-  margin: 16px 0;
-}
-
-.text-content :deep(strong) {
+.message-content :deep(th) {
+  background: oklch(96% 0.005 250);
   font-weight: 600;
 }
 
-.tag {
-  display: inline-block;
-  padding: 2px 8px;
+/* Content Blocks */
+.content-block {
+  margin-bottom: 8px;
+}
+
+.content-block:last-child {
+  margin-bottom: 0;
+}
+
+/* Thinking Block */
+.thinking-block {
+  background: oklch(96% 0.01 280);
+  border: 1px solid oklch(90% 0.01 280);
   border-radius: 4px;
+  margin: 8px 0;
+}
+
+.thinking-header {
+  display: flex;
+  align-items: center;
+  padding: 6px 10px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.thinking-header:hover {
+  background: oklch(94% 0.01 280);
+}
+
+.thinking-icon {
+  margin-right: 6px;
+}
+
+.thinking-label {
   font-size: 12px;
-  margin: 2px 0;
+  font-weight: 500;
+  color: oklch(45% 0.02 280);
 }
 
-.tag.file {
-  background: #e3f2fd;
-  color: #1565c0;
+.thinking-toggle {
+  margin-left: auto;
+  font-size: 10px;
+  color: oklch(50% 0.01 280);
 }
 
-.tag.image {
-  background: #f3e5f5;
-  color: #7b1fa2;
+.thinking-content {
+  padding: 8px 10px;
+  border-top: 1px solid oklch(90% 0.01 280);
+  font-size: 12px;
+  color: oklch(40% 0.01 280);
+  background: oklch(98% 0.005 280);
 }
 
-.tag.voice {
-  background: #e8f5e9;
-  color: #2e7d32;
+/* Tool Call Block */
+.tool-call-block {
+  background: oklch(96% 0.01 180);
+  border: 1px solid oklch(90% 0.01 180);
+  border-radius: 4px;
+  margin: 8px 0;
 }
 
-.tag.video {
-  background: #fff3e0;
-  color: #e65100;
+.tool-header {
+  display: flex;
+  align-items: center;
+  padding: 6px 10px;
+  background: oklch(94% 0.01 180);
 }
 
-.tag.unknown {
-  background: #f5f5f5;
-  color: #666;
+.tool-icon {
+  margin-right: 6px;
+}
+
+.tool-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: oklch(35% 0.02 180);
+  font-family: monospace;
+}
+
+.tool-arguments {
+  padding: 8px 10px;
+  margin: 0;
+  font-size: 11px;
+  color: oklch(40% 0.01 180);
+  background: oklch(98% 0.005 180);
+  overflow-x: auto;
+}
+
+/* Tool Result Block */
+.tool-result-block {
+  background: oklch(96% 0.01 60);
+  border: 1px solid oklch(90% 0.01 60);
+  border-radius: 4px;
+  margin: 8px 0;
+}
+
+.result-header {
+  display: flex;
+  align-items: center;
+  padding: 6px 10px;
+  background: oklch(94% 0.01 60);
+}
+
+.result-icon {
+  margin-right: 6px;
+}
+
+.result-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: oklch(35% 0.02 60);
+}
+
+.result-content {
+  padding: 8px 10px;
+  margin: 0;
+  font-size: 11px;
+  color: oklch(40% 0.01 60);
+  background: oklch(98% 0.005 60);
+  overflow-x: auto;
+  max-height: 200px;
+}
+
+.attachments {
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.attachment-tag {
+  font-size: 11px;
+  padding: 2px 6px;
+  background: oklch(94% 0.005 250);
+  border-radius: 2px;
+  color: oklch(50% 0.01 250);
+}
+
+.attachment-tag.image {
+  background: oklch(92% 0.05 300);
+  color: oklch(45% 0.15 300);
+}
+
+.attachment-tag.file {
+  background: oklch(92% 0.05 250);
+  color: oklch(45% 0.15 250);
+}
+
+.load-more.loading {
+  pointer-events: none;
+  opacity: 0.7;
+}
+
+.loading-spinner {
+  display: inline-block;
+  animation: spin 1s linear infinite;
+  margin-right: 8px;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 </style>

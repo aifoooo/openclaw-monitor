@@ -14,14 +14,15 @@
   box-sizing: border-box;
 }
 
-body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-  background-color: #f5f5f5;
+html, body, #app {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
 }
 
-#app {
-  max-width: 1400px;
-  margin: 0 auto;
-  padding: 20px;
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  background-color: oklch(92% 0.005 250);
+  padding: 16px;
 }
 </style>

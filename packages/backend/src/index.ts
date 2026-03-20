@@ -11,7 +11,8 @@ import fs from 'fs';
 const config = {
   openclawDir: process.env.OPENCLAW_DIR || '/root/.openclaw',
   cacheTracePath: process.env.CACHE_TRACE_PATH || path.join(process.env.HOME || '/root', '.openclaw/logs/cache-trace.jsonl'),
-  sessionsPath: process.env.SESSIONS_PATH || path.join(process.env.HOME || '/root', '.openclaw/sessions'),
+  // ✅ 修复：监听 agents 目录下的所有 session 文件
+  sessionsPath: process.env.SESSIONS_PATH || path.join(process.env.HOME || '/root', '.openclaw/agents'),
   dbPath: process.env.DB_PATH || '/var/lib/openclaw-monitor/monitor.db',
   port: parseInt(process.env.PORT || '3000'),
   recentLimit: parseInt(process.env.RECENT_LIMIT || '100'),
@@ -101,8 +102,9 @@ startWatcher(config.cacheTracePath, {
 // ✅ 立即启动消息文件监听
 startMessageWatcher(config.sessionsPath, {
   onNewMessage: (data) => {
-    console.log(`[Monitor] New message: ${data.type}`);
-    broadcast('chat:updated' as any, data as any);
+    console.log(`[Monitor] New message: ${data.type}`, data.file);
+    // ✅ 直接推送消息数据，类型为 new_message
+    broadcast('new_message' as any, data as any);
   },
 });
 

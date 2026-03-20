@@ -1,54 +1,42 @@
 <template>
-  <div class="home">
-    <header class="header">
-      <h1>OpenClaw Monitor</h1>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <h1 class="app-title">OpenClaw Monitor</h1>
       <div class="header-actions">
-        <select v-model="selectedChannel" @change="onChannelChange" class="channel-select">
-          <option value="">全部渠道</option>
-          <option v-for="ch in channels" :key="ch.id" :value="ch.id">{{ ch.name }}</option>
+        <select v-model="selectedAccount" @change="onAccountChange" class="header-select">
+          <option value="">全部账号</option>
+          <option v-for="acc in accounts" :key="`${acc.channelId}:${acc.accountId}`" 
+                  :value="`${acc.channelId}:${acc.accountId}`">
+            {{ acc.channelName }} - {{ acc.accountName }}
+          </option>
         </select>
-        <select v-model="showHidden" @change="onHiddenChange" class="hidden-select">
-          <option :value="false">已隐藏 ({{ hiddenCount }})</option>
-          <option :value="true">显示隐藏</option>
-        </select>
-        <span class="status" :class="connected ? 'connected' : 'disconnected'">
-          {{ connected ? '已连接' : '未连接' }}
-        </span>
+        <span class="status-dot" :class="connected ? 'online' : 'offline'"></span>
+        <span class="status-text">{{ connected ? '已连接' : '未连接' }}</span>
       </div>
     </header>
-    
-    <div class="main-content">
-      <!-- 隐藏列表 -->
-      <aside v-if="showHidden" class="sidebar hidden-sidebar">
-        <div class="hidden-header">
-          <h3>已隐藏的聊天 ({{ hiddenChats.length }})</h3>
-          <button @click="showHidden = false" class="close-btn">✕</button>
-        </div>
-        <div class="hidden-list">
-          <div v-for="chat in hiddenChats" :key="chat.id" class="hidden-item">
-            <div class="hidden-info">
-              <div class="hidden-title">{{ chat.title }}</div>
-              <div class="hidden-channel">{{ chat.channelId }}</div>
-            </div>
-            <button @click="unhideChat(chat)" class="unhide-btn">恢复</button>
-          </div>
-        </div>
+
+    <!-- Main Content -->
+    <main class="app-main">
+      <!-- Chat List Sidebar -->
+      <aside class="sidebar-chat">
+        <ChatList ref="chatListRef" :account-filter="selectedAccount" @chat-selected="onChatSelected" />
       </aside>
-      
-      <!-- 聊天列表 -->
-      <aside class="sidebar">
-        <ChatList ref="chatListRef" :channel-id="selectedChannel" @chat-selected="onChatSelected" @chat-hidden="onChatHidden" />
-      </aside>
-      
-      <!-- 消息详情 -->
-      <main class="content">
-        <MessageDetail v-if="selectedChat" :chat-id="selectedChat.id" :session-file="selectedChat.sessionFile" />
-        <div v-else class="placeholder">
-          <div class="placeholder-icon">💬</div>
-          <div class="placeholder-text">选择一个聊天查看详情</div>
+
+      <!-- Message Detail -->
+      <section class="content-area">
+        <MessageDetail 
+          v-if="selectedChat" 
+          ref="messageDetailRef"
+          :chat-id="selectedChat.id" 
+          :session-file="selectedChat.sessionFile" 
+        />
+        <div v-else class="empty-placeholder">
+          <div class="empty-icon">💬</div>
+          <div class="empty-text">选择一个聊天查看详情</div>
         </div>
-      </main>
-    </div>
+      </section>
+    </main>
   </div>
 </template>
 
@@ -56,168 +44,149 @@
 import { ref, onMounted, onUnmounted } from 'vue';
 import ChatList from '../components/ChatList.vue';
 import MessageDetail from '../components/MessageDetail.vue';
-import { fetchChannels, fetchHiddenChats, fetchHiddenCount, unhideChat as unhideChatApi, createWebSocket } from '../services/api';
+import { fetchAccounts, createWebSocket } from '../services/api';
 
-const channels = ref<any[]>([]);
-const selectedChannel = ref('');
+interface Account {
+  channelId: string;
+  accountId: string;
+  channelName: string;
+  accountName: string;
+  chatCount: number;
+  lastActivity: number | null;
+}
+
+const accounts = ref<Account[]>([]);
+const selectedAccount = ref('');
 const selectedChat = ref<any>(null);
 const connected = ref(false);
-const showHidden = ref(false);
-const hiddenChats = ref<any[]>([]);
-const hiddenCount = ref(0);
-const chatListRef = ref<{ refresh: () => void } | null>(null);
+const chatListRef = ref<{ 
+  refresh: () => void; 
+  updateChat: (id: string, updates: any) => void;
+  updateBySessionFile: (sessionFile: string, updates: any) => void;
+} | null>(null);
+const messageDetailRef = ref<{ refresh: () => void; appendMessage: (msg: any) => void } | null>(null);
 let ws: WebSocket | null = null;
 
-async function loadChannels() {
+async function loadAccounts() {
   try {
-    const data = await fetchChannels();
-    channels.value = data.channels || [];
+    const data = await fetchAccounts();
+    accounts.value = data.accounts || [];
   } catch (error) {
-    console.error('Failed to load channels:', error);
+    console.error('Failed to load accounts:', error);
   }
 }
 
-async function loadHiddenCount() {
-  try {
-    const data = await fetchHiddenCount();
-    hiddenCount.value = data.count || 0;
-  } catch (error) {
-    console.error('Failed to load hidden count:', error);
-  }
-}
-
-async function loadHiddenChats() {
-  try {
-    const data = await fetchHiddenChats();
-    hiddenChats.value = data.chats || [];
-  } catch (error) {
-    console.error('Failed to load hidden chats:', error);
-  }
-}
-
-function onChannelChange() {
-  // 清空选中的聊天
+function onAccountChange() {
   selectedChat.value = null;
-}
-
-function onHiddenChange() {
-  if (showHidden.value) {
-    loadHiddenChats();
-  }
 }
 
 function onChatSelected(chat: any) {
   selectedChat.value = chat;
 }
 
-async function onChatHidden() {
-  // 更新隐藏数量
-  await loadHiddenCount();
-}
-
-async function unhideChat(chat: any) {
-  try {
-    await unhideChatApi(chat.id);
-    
-    // 从隐藏列表移除
-    hiddenChats.value = hiddenChats.value.filter(c => c.id !== chat.id);
-    
-    // 更新隐藏数量
-    await loadHiddenCount();
-    
-    // 刷新聊天列表
-    if (chatListRef.value) {
-      chatListRef.value.refresh();
-    }
-  } catch (error) {
-    console.error('Failed to unhide chat:', error);
-  }
-}
-
 function handleWebSocketMessage(data: any) {
-  console.log('[WS] Received:', data);
-  
-  if (data.type === 'chat:updated' || data.type === 'new_message') {
-    // 刷新聊天列表
-    if (chatListRef.value) {
-      chatListRef.value.refresh();
+  if (data.type === 'new_message' && data.data) {
+    const sessionFile = data.data.file;
+    const message = data.data.message;
+    
+    if (chatListRef.value && sessionFile) {
+      chatListRef.value.updateBySessionFile(sessionFile, { lastMessageAt: Date.now() });
     }
     
-    // 刷新当前聊天消息
-    if (selectedChat.value) {
-      const temp = selectedChat.value;
-      selectedChat.value = null;
-      setTimeout(() => {
-        selectedChat.value = temp;
-      }, 100);
+    if (selectedChat.value && messageDetailRef.value && sessionFile) {
+      if (selectedChat.value.sessionFile === sessionFile && message) {
+        const msg = message.message || message;
+        messageDetailRef.value.appendMessage({
+          id: message.id || `msg-${Date.now()}`,
+          role: msg.role || 'user',
+          content: msg.content || '',
+          timestamp: msg.timestamp || Date.now(),
+        });
+      }
     }
   }
 }
 
 function connectWebSocket() {
   ws = createWebSocket(handleWebSocketMessage);
-  
   if (ws) {
     ws.onopen = () => {
-      console.log('[WS] Connected');
       connected.value = true;
-    };
-    
-    ws.onclose = () => {
-      console.log('[WS] Disconnected');
-      connected.value = false;
-      // 5秒后重连
-      setTimeout(() => {
-        if (!ws || ws.readyState === WebSocket.CLOSED) {
-          connectWebSocket();
+      // 发送心跳包
+      const heartbeat = setInterval(() => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'ping' }));
         }
-      }, 5000);
+      }, 30000); // 每30秒发送一次心跳
+      // 存储心跳定时器
+      (ws as any)._heartbeat = heartbeat;
     };
-    
-    ws.onerror = (error) => {
-      console.error('[WS] Error:', error);
+    ws.onclose = () => { 
+      connected.value = false;
+      // 清除心跳
+      if ((ws as any)._heartbeat) {
+        clearInterval((ws as any)._heartbeat);
+      }
+      setTimeout(() => { if (!ws || ws.readyState === WebSocket.CLOSED) connectWebSocket(); }, 5000);
     };
+    ws.onerror = (error) => { console.error('[WS] Error:', error); };
   }
 }
 
 onMounted(() => {
-  loadChannels();
-  loadHiddenCount();
+  loadAccounts();
   connectWebSocket();
 });
 
 onUnmounted(() => {
-  if (ws) {
-    ws.close();
-    ws = null;
-  }
+  if (ws) { ws.close(); ws = null; }
 });
 </script>
 
 <style scoped>
-.home {
-  height: 100vh;
+/* ==================== QQ 风格布局 ==================== */
+/* 外圆内方，无间隙 */
+
+.app-container {
+  height: 100%;
+  width: 100%;
   display: flex;
   flex-direction: column;
-  background: #f0f2f5;
-  padding: 12px;
-  gap: 12px;
+  background: oklch(99% 0.002 250);
+  
+  /* 最外层圆角 */
+  border-radius: 12px;
+  overflow: hidden;
+  
+  /* 细微边框 */
+  border: 1px solid oklch(88% 0.005 250);
+  
+  /* 阴影 */
+  box-shadow: 
+    0 2px 8px oklch(0% 0 0 / 0.06),
+    0 8px 24px oklch(0% 0 0 / 0.04);
 }
 
-.header {
+/* ==================== Header ==================== */
+.app-header {
+  height: 56px;
+  padding: 0 20px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 16px 24px;
-  background: #fff;
-  border-radius: 12px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  background: oklch(99% 0.002 250);
+  border-bottom: 1px solid oklch(92% 0.005 250);
+  
+  /* 顶部无圆角 */
+  border-radius: 0;
 }
 
-.header h1 {
-  font-size: 20px;
-  font-weight: 600;
-  color: #333;
+.app-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: oklch(20% 0.02 250);
+  letter-spacing: -0.02em;
+  margin: 0;
 }
 
 .header-actions {
@@ -226,175 +195,100 @@ onUnmounted(() => {
   gap: 12px;
 }
 
-.channel-select, .hidden-select {
-  padding: 8px 32px 8px 12px;
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
-  font-size: 14px;
-  background: #fff;
+.header-select {
+  padding: 6px 32px 6px 12px;
+  border: 1px solid oklch(88% 0.005 250);
+  border-radius: 6px;
+  font-size: 13px;
+  background: oklch(99% 0.002 250);
   cursor: pointer;
   appearance: none;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23666' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
-  background-position: right 12px center;
+  background-position: right 10px center;
 }
 
-.channel-select:focus, .hidden-select:focus {
+.header-select:hover {
+  border-color: oklch(75% 0.01 250);
+}
+
+.header-select:focus {
   outline: none;
-  border-color: #1976d2;
+  border-color: oklch(55% 0.18 250);
 }
 
-.status {
-  padding: 6px 14px;
-  border-radius: 16px;
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.status-dot.online {
+  background: oklch(65% 0.15 150);
+}
+
+.status-dot.offline {
+  background: oklch(60% 0.15 25);
+}
+
+.status-text {
   font-size: 12px;
-  font-weight: 500;
+  color: oklch(50% 0.01 250);
+  margin-left: -4px;
 }
 
-.status.connected {
-  background: #e8f5e9;
-  color: #2e7d32;
-}
-
-.status.disconnected {
-  background: #ffebee;
-  color: #c62828;
-}
-
-.main-content {
+/* ==================== Main Content ==================== */
+.app-main {
   display: flex;
   flex: 1;
   overflow: hidden;
-  gap: 12px;
+  
+  /* 无间隙 */
+  gap: 0;
 }
 
-.sidebar {
-  width: 320px;
-  background: #fff;
-  border-radius: 12px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+/* ==================== Sidebar Chat ==================== */
+.sidebar-chat {
+  width: 280px;
+  min-width: 240px;
+  max-width: 320px;
+  background: oklch(99% 0.002 250);
+  border-right: 1px solid oklch(92% 0.005 250);
+  
+  /* 内部无圆角 */
+  border-radius: 0;
   overflow: hidden;
 }
 
-.hidden-sidebar {
-  width: 280px;
-  background: #fff;
-  border-radius: 12px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+/* ==================== Content Area ==================== */
+.content-area {
+  flex: 1;
   display: flex;
   flex-direction: column;
-}
-
-.hidden-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 16px;
-  border-bottom: 1px solid #f0f0f0;
-}
-
-.hidden-header h3 {
-  font-size: 14px;
-  font-weight: 600;
-  color: #333;
-  margin: 0;
-}
-
-.close-btn {
-  background: none;
-  border: none;
-  font-size: 18px;
-  cursor: pointer;
-  color: #999;
-  padding: 0;
-  line-height: 1;
-  transition: color 0.2s;
-}
-
-.close-btn:hover {
-  color: #333;
-}
-
-.hidden-list {
-  flex: 1;
-  overflow-y: auto;
-  padding: 8px;
-}
-
-.hidden-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px;
-  background: #fafafa;
-  border-radius: 8px;
-  margin-bottom: 8px;
-  transition: background-color 0.2s;
-}
-
-.hidden-item:hover {
-  background: #f5f5f5;
-}
-
-.hidden-info {
-  flex: 1;
-  min-width: 0;
-}
-
-.hidden-title {
-  font-size: 14px;
-  font-weight: 500;
-  color: #333;
-  white-space: nowrap;
+  background: oklch(97% 0.005 250);
+  
+  /* 内部无圆角 */
+  border-radius: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
 
-.hidden-channel {
-  font-size: 12px;
-  color: #999;
-  margin-top: 4px;
-}
-
-.unhide-btn {
-  padding: 6px 14px;
-  background: #1976d2;
-  color: #fff;
-  border: none;
-  border-radius: 6px;
-  font-size: 12px;
-  cursor: pointer;
-  margin-left: 8px;
-  transition: background-color 0.2s;
-}
-
-.unhide-btn:hover {
-  background: #1565c0;
-}
-
-.content {
+.empty-placeholder {
   flex: 1;
-  overflow-y: auto;
-  background: #fff;
-  border-radius: 12px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-}
-
-.placeholder {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  height: 100%;
-  color: #999;
+  color: oklch(50% 0.01 250);
 }
 
-.placeholder-icon {
+.empty-icon {
   font-size: 48px;
-  margin-bottom: 16px;
+  opacity: 0.3;
+  margin-bottom: 12px;
 }
 
-.placeholder-text {
-  font-size: 16px;
+.empty-text {
+  font-size: 14px;
+  font-weight: 500;
 }
 </style>

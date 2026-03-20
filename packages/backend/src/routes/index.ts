@@ -141,6 +141,7 @@ class RunCache {
   private lastUpdate = 0;
   private ttl: number;
   private maxSize: number;
+  private initialized = false;
   
   constructor(ttl: number = 5000, maxSize: number = 1000) {
     this.ttl = ttl;
@@ -148,7 +149,11 @@ class RunCache {
   }
   
   async get(limit: number, offset: number, sessionKey?: string): Promise<{ runs: Run[]; total: number }> {
-    // Simplified implementation
+    // 确保已初始化
+    if (!this.initialized) {
+      await this.refresh();
+    }
+    
     const runs = sessionKey 
       ? this.cache.filter(r => r.sessionKey === sessionKey)
       : this.cache;
@@ -165,7 +170,6 @@ class RunCache {
   }
   
   addRun(run: Run): void {
-    // Simplified implementation
     const existingIndex = this.index.get(run.id);
     
     if (existingIndex !== undefined) {
@@ -175,12 +179,38 @@ class RunCache {
       if (this.cache.length > this.maxSize) {
         this.cache.pop();
       }
+      // 更新索引
+      this.rebuildIndex();
     }
   }
   
+  private rebuildIndex(): void {
+    this.index.clear();
+    this.sessionIndex.clear();
+    this.cache.forEach((run, idx) => {
+      this.index.set(run.id, idx);
+      const sessionKey = run.sessionKey;
+      if (sessionKey) {
+        if (!this.sessionIndex.has(sessionKey)) {
+          this.sessionIndex.set(sessionKey, []);
+        }
+        this.sessionIndex.get(sessionKey)!.push(idx);
+      }
+    });
+  }
+  
   async refresh(): Promise<void> {
-    // Simplified implementation
-    this.lastUpdate = Date.now();
+    // 从数据库加载 Run 数据
+    try {
+      const runs = db.getRuns({ limit: this.maxSize });
+      this.cache = runs;
+      this.rebuildIndex();
+      this.lastUpdate = Date.now();
+      this.initialized = true;
+      console.log(`[RunCache] Loaded ${runs.length} runs from database`);
+    } catch (e) {
+      console.error('[RunCache] Failed to load runs:', e);
+    }
   }
   
   getStatus() {
@@ -412,8 +442,10 @@ export function createApp() {
   const extendedConfig: MonitorConfig = {
     openclawDir: OPENCLAW_DIR,
     cacheTracePath: process.env.CACHE_TRACE_PATH || path.join(process.env.HOME || '/root', '.openclaw/logs/cache-trace.jsonl'),
+    gatewayLogPath: process.env.GATEWAY_LOG_PATH || '/tmp/openclaw/openclaw-*.log',
     dbPath: process.env.DB_PATH || '/var/lib/openclaw-monitor/monitor.db',
     port: parseInt(process.env.PORT || '3000'),
+    wsPort: parseInt(process.env.WS_PORT || '3000'),
     recentLimit: parseInt(process.env.RECENT_LIMIT || '100'),
     cleanupInterval: parseInt(process.env.CLEANUP_INTERVAL || '3600000'),
     cacheTracesDaysToKeep: parseInt(process.env.CACHE_TRACES_DAYS || '7'),
@@ -422,7 +454,13 @@ export function createApp() {
   const extendedRoutes = createExtendedRoutes(extendedConfig);
   app.route('/api', extendedRoutes);
   
-  app.get('/ws', upgradeWebSocket(() => ws.createWSHandler()));
+  app.get('/ws', upgradeWebSocket((c) => {
+    // ✅ 从请求上下文中获取 token
+    const url = c.req.url;
+    const token = new URL(url).searchParams.get('token');
+    
+    return ws.createWSHandler(token);
+  }));
   
   return { app, injectWebSocket, runCache };
 }

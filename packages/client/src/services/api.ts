@@ -1,18 +1,81 @@
 import axios from 'axios';
 
-// 使用相对路径，通过 vite proxy 转发（本地开发）或直接请求（生产环境）
-// 如果需要直连后端，设置 VITE_API_BASE 环境变量
 const API_BASE = import.meta.env.VITE_API_BASE || '';
-const API_TOKEN = import.meta.env.VITE_API_TOKEN;
+
+// 从 localStorage 或 URL 参数获取 token
+function getToken(): string | null {
+  // 1. 优先从 localStorage 获取
+  const storedToken = localStorage.getItem('api_token');
+  if (storedToken) return storedToken;
+  
+  // 2. 从 URL 参数获取
+  const urlParams = new URLSearchParams(window.location.search);
+  const urlToken = urlParams.get('token');
+  if (urlToken) {
+    localStorage.setItem('api_token', urlToken);
+    // 清除 URL 中的 token 参数（安全考虑）
+    urlParams.delete('token');
+    const newUrl = urlParams.toString() 
+      ? `${window.location.pathname}?${urlParams.toString()}`
+      : window.location.pathname;
+    window.history.replaceState({}, '', newUrl);
+    return urlToken;
+  }
+  
+  return null;
+}
 
 const api = axios.create({
   baseURL: API_BASE,
   timeout: 10000,
 });
 
-// 添加 Token 到请求头
-if (API_TOKEN) {
-  api.defaults.headers.common['Authorization'] = `Bearer ${API_TOKEN}`;
+// 请求拦截器：动态添加 Token
+api.interceptors.request.use((config) => {
+  const token = getToken();
+  if (token) {
+    config.headers['X-API-Key'] = token;
+  }
+  return config;
+});
+
+// 响应拦截器：处理认证错误
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      // Token 无效，清除并提示重新输入
+      localStorage.removeItem('api_token');
+    }
+    return Promise.reject(error);
+  }
+);
+
+// 设置 Token
+export function setToken(token: string) {
+  localStorage.setItem('api_token', token);
+}
+
+// 获取当前 Token
+export function getCurrentToken(): string | null {
+  return getToken();
+}
+
+// 清除 Token
+export function clearToken() {
+  localStorage.removeItem('api_token');
+}
+
+// 验证 Token
+export async function validateToken(token: string): Promise<boolean> {
+  try {
+    const response = await axios.get(`${API_BASE}/api/chats`, {
+      headers: { 'X-API-Key': token }
+    });
+    return response.status === 200;
+  } catch {
+    return false;
+  }
 }
 
 export async function fetchChannels() {
@@ -20,16 +83,21 @@ export async function fetchChannels() {
   return response.data;
 }
 
-export async function fetchChats(channelId: string, limit = 50, offset = 0) {
+export async function fetchAccounts() {
+  const response = await api.get('/api/accounts');
+  return response.data;
+}
+
+export async function fetchChats(channelId?: string, limit = 50, offset = 0) {
   const response = await api.get('/api/chats', {
     params: { channelId, limit, offset }
   });
   return response.data;
 }
 
-export async function fetchMessages(chatId: string, limit = 100) {
+export async function fetchMessages(chatId: string, limit = 10, offset = 0) {
   const response = await api.get(`/api/chats/${chatId}/messages`, {
-    params: { limit }
+    params: { limit, offset }
   });
   return response.data;
 }
@@ -64,36 +132,27 @@ export async function fetchHiddenCount() {
 
 // WebSocket 连接
 export function createWebSocket(onMessage?: (data: any) => void): WebSocket | null {
-  // WebSocket 连接地址优先级：
-  // 1. VITE_WS_URL 环境变量（完整 URL，如 ws://192.168.1.100:3000/ws）
-  // 2. VITE_API_BASE 环境变量的 host（如 http://192.168.1.100:3000 → ws://192.168.1.100:3000/ws）
-  // 3. 开发模式默认 localhost:3000
-  // 4. 生产模式使用当前页面 host
-  
   let wsUrl: string;
   
   if (import.meta.env.VITE_WS_URL) {
-    // 方式1：直接配置 WebSocket URL
     wsUrl = import.meta.env.VITE_WS_URL;
   } else if (API_BASE && API_BASE !== '') {
-    // 方式2：从 API_BASE 推导
     const protocol = API_BASE.startsWith('https') ? 'wss:' : 'ws:';
     const host = API_BASE.replace(/^https?:\/\//, '');
     wsUrl = `${protocol}//${host}/ws`;
   } else if (typeof window !== 'undefined' && window.location.port === '5173') {
-    // 方式3：开发模式默认
     wsUrl = 'ws://localhost:3000/ws';
   } else {
-    // 方式4：生产模式使用当前 host
     const protocol = typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = typeof window !== 'undefined' ? window.location.host : 'localhost:3000';
     wsUrl = `${protocol}//${host}/ws`;
   }
   
-  console.log('[WS] Connecting to:', wsUrl);
+  // 添加 Token 到 URL（使用动态获取的 token）
+  const token = getToken();
+  const url = token ? `${wsUrl}?token=${token}` : wsUrl;
   
-  // 如果有 Token，添加到 URL
-  const url = API_TOKEN ? `${wsUrl}?token=${API_TOKEN}` : wsUrl;
+  console.log('[WS] Connecting to:', url.replace(/token=[^&]+/, 'token=***'));
   
   const ws = new WebSocket(url);
   

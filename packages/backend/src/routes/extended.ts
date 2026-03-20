@@ -3,6 +3,7 @@
  * 
  * 新增端点：
  * - /api/channels - 渠道管理
+ * - /api/accounts - 账号管理（从聊天数据中聚合）
  * - /api/chats - 聊天管理
  * - /api/runs/:runId/operations - 操作追踪
  */
@@ -43,6 +44,25 @@ export function createExtendedRoutes(config: MonitorConfig): Hono {
     } catch (e) {
       console.error('[API] Error getting channels:', e);
       return c.json({ error: 'Failed to get channels' }, 500);
+    }
+  });
+  
+  /**
+   * GET /api/accounts - 获取账号列表（从聊天数据聚合）
+   * 过滤掉 default 账号
+   */
+  api.get('/accounts', (c) => {
+    try {
+      // 从数据库获取所有账号（排除 default）
+      const accounts = dbExt.getAccounts().filter(acc => !(acc.channelId === 'qqbot' && acc.accountId === 'default'));
+      
+      return c.json({
+        accounts,
+        total: accounts.length,
+      });
+    } catch (e) {
+      console.error('[API] Error getting accounts:', e);
+      return c.json({ error: 'Failed to get accounts' }, 500);
     }
   });
   
@@ -252,13 +272,17 @@ export function createExtendedRoutes(config: MonitorConfig): Hono {
   
   /**
    * GET /api/chats/:chatId/messages - 获取聊天消息
+   * 支持滚动加载：
+   * - limit: 每次返回的消息数（默认 10）
+   * - offset: 从最新消息往前偏移（默认 0）
+   * - 返回 total 和 hasMore 用于前端判断是否还有更多
    */
   api.get('/chats/:chatId/messages', async (c) => {
     const chatId = c.req.param('chatId');
     const limitParam = c.req.query('limit');
     const offsetParam = c.req.query('offset');
     
-    const limit = parseInt(limitParam || '50');
+    const limit = parseInt(limitParam || '10');
     const offset = parseInt(offsetParam || '0');
     
     try {
@@ -269,15 +293,21 @@ export function createExtendedRoutes(config: MonitorConfig): Hono {
       }
       
       let messages: any[] = [];
+      let total = 0;
+      
       if (ch.sessionFile) {
+        // 使用优化后的消息读取
         messages = await chat.getChatMessages(ch.sessionFile, limit, offset);
+        // 从数据库获取总消息数
+        total = ch.messageCount || messages.length;
       }
       
       return c.json({
         messages,
-        total: messages.length,
+        total,
         limit,
         offset,
+        hasMore: offset + messages.length < total,
       });
     } catch (e) {
       console.error('[API] Error getting messages:', e);
@@ -304,6 +334,41 @@ export function createExtendedRoutes(config: MonitorConfig): Hono {
     } catch (e) {
       console.error('[API] Error scanning chats:', e);
       return c.json({ error: 'Failed to scan chats' }, 500);
+    }
+  });
+  
+  /**
+   * POST /api/chats/sync - 同步 chats 表与 session 文件
+   * 
+   * 逻辑：
+   * 1. 扫描所有 session 文件
+   * 2. 文件有，表没有 → 新增（通过 scan）
+   * 3. 文件没有，表有 → 删除
+   */
+  api.post('/chats/sync', async (c) => {
+    try {
+      const channels = dbExt.getChannels();
+      
+      // 1. 先扫描并新增缺失的 chats
+      const newChats = await chat.scanAllSessions(config.openclawDir, channels);
+      newChats.forEach(ch => dbExt.saveChat(ch));
+      
+      // 2. 删除文件不存在的 chats
+      const removed = dbExt.cleanOrphanedChats(config.openclawDir);
+      
+      // 3. 获取最终数量
+      const allChats = dbExt.getChats(undefined, 1000, 0, true);
+      
+      return c.json({
+        status: 'ok',
+        added: newChats.length,
+        removed,
+        total: allChats.length,
+        message: `Synced: added ${newChats.length}, removed ${removed}`,
+      });
+    } catch (e) {
+      console.error('[API] Error syncing chats:', e);
+      return c.json({ error: 'Failed to sync chats' }, 500);
     }
   });
   
