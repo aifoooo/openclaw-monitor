@@ -340,231 +340,85 @@ function countMessagesInFile(filePath: string): number {
 }
 
 /**
- * 扫描渠道的所有 Session 文件
- */
-export async function scanChannelSessions(
-  openclawDir: string,
-  channelId: string,
-  accountId: string
-): Promise<Chat[]> {
-  const chats: Chat[] = [];
-  
-  // 渠道特定的 session 目录
-  const channelSessionDir = path.join(openclawDir, channelId, 'sessions');
-  
-  // ✅ 新增：agents 目录
-  const agentsDir = path.join(openclawDir, 'agents');
-  
-  // ✅ 不再扫描全局 session 目录，因为那里的消息文件没有 sessionKey
-  // 全局消息文件只是消息记录，不应该独立创建聊天
-  // 元数据文件在渠道目录中，已经有 sessionKey
-  
-  // 扫描渠道特定的 session 文件
-  if (fs.existsSync(channelSessionDir)) {
-    const files = fs.readdirSync(channelSessionDir)
-      .filter(f => f.endsWith('.jsonl') || f.endsWith('.json'));
-    
-    for (const file of files) {
-      const filePath = path.join(channelSessionDir, file);
-      
-      // 如果是 JSON 文件，解析为 session 元数据
-      if (file.endsWith('.json')) {
-        try {
-          const content = fs.readFileSync(filePath, 'utf-8');
-          const meta = JSON.parse(content);
-          
-          // 从文件名推断 sessionKey（格式：session-{account}.json）
-          const accountFromFileName = path.basename(file, '.json').replace('session-', '');
-          const inferredSessionKey = meta.sessionKey || 
-            `agent:${accountId}-${channelId}:${channelId}:direct:${meta.sessionId || accountFromFileName}`;
-          
-          // ✅ 关键修复：从 agents 目录的 sessions.json 读取正确的 sessionFile
-          const agentsDir = path.join(openclawDir, 'agents');
-          let sessionFile = filePath;
-          let messageCount = 0;
-          let lastMessageAt = meta.lastConnectedAt || meta.savedAt;
-          
-          // 查找对应的 agent 目录
-          const agentDirs = fs.existsSync(agentsDir) 
-            ? fs.readdirSync(agentsDir, { withFileTypes: true })
-                .filter(d => d.isDirectory())
-                .map(d => d.name)
-            : [];
-          
-          // ✅ 修复匹配逻辑：渠道名和目录名的映射
-          // qqbot -> *-qq, feishu -> *-feishu
-          const channelToSuffix: Record<string, string> = {
-            'qqbot': 'qq',
-            'feishu': 'feishu',
-          };
-          const expectedSuffix = channelToSuffix[channelId] || channelId;
-          
-          for (const agentName of agentDirs) {
-            // 匹配：目录名以渠道后缀结尾，且包含账号名
-            const matches = (agentName.endsWith('-' + expectedSuffix) || agentName.includes(expectedSuffix)) 
-              && agentName.includes(accountFromFileName);
-            
-            if (matches) {
-              const sessionsJsonPath = path.join(agentsDir, agentName, 'sessions', 'sessions.json');
-              if (fs.existsSync(sessionsJsonPath)) {
-                const sessionInfo = getSessionFileFromSessionsJson(sessionsJsonPath, inferredSessionKey);
-                if (sessionInfo) {
-                  sessionFile = sessionInfo.sessionFile;
-                  messageCount = sessionInfo.messageCount;
-                  lastMessageAt = sessionInfo.lastMessageAt;
-                  break;
-                }
-              }
-            }
-          }
-          
-          // 创建 Chat 对象
-          const chat: Chat = {
-            id: extractChatId(inferredSessionKey),
-            channelId,
-            accountId: meta.accountId || accountId,
-            sessionKey: inferredSessionKey,
-            title: `${channelId} - ${meta.accountId || accountFromFileName}`,
-            lastMessageAt,
-            messageCount,
-            runCount: 0,
-            sessionFile,
-          };
-          
-          chats.push(chat);
-        } catch (e) {
-          // 忽略解析错误
-        }
-      } else {
-        // 解析 JSONL 文件
-        const chat = await parseSessionFile(filePath, channelId, accountId);
-        if (chat) {
-          chats.push(chat);
-        }
-      }
-    }
-  }
-  
-  console.log(`[Chat] Scanned ${chats.length} chats for channel ${channelId}`);
-  
-  // ✅ 新增：扫描 agents 目录
-  if (fs.existsSync(agentsDir)) {
-    console.log(`[Chat] Scanning agents directory: ${agentsDir}`);
-    const agentDirs = fs.readdirSync(agentsDir, { withFileTypes: true })
-      .filter(d => d.isDirectory())
-      .map(d => d.name);
-    
-    console.log(`[Chat] Found agents: ${agentDirs.join(', ')}`);
-    
-    for (const agentName of agentDirs) {
-      // 检查 agent 名称是否匹配当前渠道
-      // agent 目录名称格式：{accountId}-{channelId} 或 mime-{channelId}
-      const matches = agentName.includes(channelId);
-      console.log(`[Chat] Agent ${agentName} matches ${channelId}: ${matches}`);
-      
-      if (matches) {
-        const agentSessionDir = path.join(agentsDir, agentName, 'sessions');
-        console.log(`[Chat] Scanning agent session dir: ${agentSessionDir}`);
-        
-        if (fs.existsSync(agentSessionDir)) {
-          const files = fs.readdirSync(agentSessionDir)
-            .filter(f => f.endsWith('.jsonl'));
-          
-          console.log(`[Chat] Found ${files.length} jsonl files in ${agentSessionDir}`);
-          
-          for (const file of files) {
-            const filePath = path.join(agentSessionDir, file);
-            const chat = await parseSessionFile(filePath, channelId, agentName);
-            if (chat) {
-              chats.push(chat);
-            }
-          }
-        }
-      }
-    }
-  } else {
-    console.log(`[Chat] Agents directory not found: ${agentsDir}`);
-  }
-  
-  // ✅ 去重：同一个 sessionKey 只保留 lastMessageAt 最大的 chat
-  const chatMap = new Map<string, Chat>();
-  for (const chat of chats) {
-    const key = chat.sessionKey || `${chat.channelId}:${chat.accountId}:${chat.id}`;
-    const existing = chatMap.get(key);
-    if (!existing || (chat.lastMessageAt || 0) > (existing.lastMessageAt || 0)) {
-      chatMap.set(key, chat);
-    }
-  }
-  
-  const dedupedChats = Array.from(chatMap.values());
-  console.log(`[Chat] After dedup: ${dedupedChats.length} chats for channel ${channelId}`);
-  
-  return dedupedChats;
-}
-
-/**
  * 扫描所有渠道的 Session
  */
 export async function scanAllSessions(
   openclawDir: string,
   channels: Array<{ id: string; accounts: Array<{ id: string }> }>
 ): Promise<Chat[]> {
-  const allChats: Chat[] = [];
+  const chats: Chat[] = [];
   
-  for (const channel of channels) {
-    // 如果有 accounts，扫描每个 account
-    if (channel.accounts && channel.accounts.length > 0) {
-      for (const account of channel.accounts) {
-        const chats = await scanChannelSessions(openclawDir, channel.id, account.id);
-        allChats.push(...chats);
-      }
-    } else {
-      // ✅ 如果没有 accounts，从 agents 目录推断
-      const agentsDir = path.join(openclawDir, 'agents');
-      if (fs.existsSync(agentsDir)) {
-        const agentDirs = fs.readdirSync(agentsDir, { withFileTypes: true })
-          .filter(d => d.isDirectory())
-          .map(d => d.name);
-        
-        // 找到匹配当前渠道的 agent
-        for (const agentName of agentDirs) {
-          if (agentName.includes(channel.id)) {
-            const chats = await scanChannelSessions(openclawDir, channel.id, agentName);
-            allChats.push(...chats);
-          }
-        }
-      }
-    }
-  }
-  
-  // ✅ 新增：扫描所有 agent 目录（包括不匹配任何渠道的 agent，如 main）
   const agentsDir = path.join(openclawDir, 'agents');
-  if (fs.existsSync(agentsDir)) {
-    const agentDirs = fs.readdirSync(agentsDir, { withFileTypes: true })
-      .filter(d => d.isDirectory())
-      .map(d => d.name);
+  if (!fs.existsSync(agentsDir)) {
+    console.log('[Chat] Agents directory not found');
+    return [];
+  }
+  
+  const agentDirs = fs.readdirSync(agentsDir, { withFileTypes: true })
+    .filter(d => d.isDirectory())
+    .map(d => d.name);
+  
+  for (const agentName of agentDirs) {
+    // ✅ 跳过 main agent（没有关联特定渠道）
+    if (agentName === 'main') {
+      console.log(`[Chat] Skipping main agent`);
+      continue;
+    }
     
-    for (const agentName of agentDirs) {
-      // 检查是否已经被扫描过
-      const alreadyScanned = channels.some(ch => 
-        ch.accounts?.some(acc => acc.id === agentName) || agentName.includes(ch.id)
-      );
+    const sessionsJsonPath = path.join(agentsDir, agentName, 'sessions', 'sessions.json');
+    if (!fs.existsSync(sessionsJsonPath)) {
+      console.log(`[Chat] sessions.json not found for agent ${agentName}`);
+      continue;
+    }
+    
+    try {
+      const content = fs.readFileSync(sessionsJsonPath, 'utf-8');
+      const sessionsData = JSON.parse(content);
       
-      // 如果没有被扫描过，则扫描
-      if (!alreadyScanned) {
-        // ✅ 修复：对于没有关联渠道的 agent（如 main），使用 'local' 作为渠道 ID
-        // parseSessionFile 会从 sessionKey 中提取正确的 channelId
-        const channelId = 'local';
-        const chats = await scanChannelSessions(openclawDir, channelId, agentName);
-        allChats.push(...chats);
+      for (const [sessionKey, sessionInfo] of Object.entries(sessionsData)) {
+        const session = sessionInfo as any;
+        const sessionFile = session.sessionFile;
+        
+        if (!sessionFile || !fs.existsSync(sessionFile)) {
+          continue;
+        }
+        
+        // 提取正确的 channelId 和 accountId
+        const extractedInfo = extractChannelAndAccountFromSessionKey(sessionKey, sessionFile);
+        
+        // 统计消息数量
+        const messageCount = countMessagesInFile(sessionFile);
+        
+        // 获取最后消息时间
+        const lastMessageAt = session.updatedAt || 0;
+        
+        // 提取 chatId（sessionKey 的最后一部分）
+        const chatId = extractChatId(sessionKey);
+        
+        // 生成标题
+        const title = extractTitle(sessionKey, lastMessageAt);
+        
+        chats.push({
+          id: chatId,
+          channelId: extractedInfo.channelId,
+          accountId: extractedInfo.accountId,
+          sessionKey,
+          title,
+          lastMessageAt,
+          messageCount,
+          runCount: 0,
+          sessionFile,
+        });
       }
+    } catch (e) {
+      console.error(`[Chat] Error parsing sessions.json for ${agentName}:`, e);
     }
   }
   
-  // ✅ 去重：同一个 sessionKey 只保留 lastMessageAt 最大的 chat
+  // 去重
   const chatMap = new Map<string, Chat>();
-  for (const chat of allChats) {
-    const key = chat.sessionKey || `${chat.channelId}:${chat.accountId}:${chat.id}`;
+  for (const chat of chats) {
+    const key = chat.sessionKey;
     const existing = chatMap.get(key);
     if (!existing || (chat.lastMessageAt || 0) > (existing.lastMessageAt || 0)) {
       chatMap.set(key, chat);
@@ -572,9 +426,21 @@ export async function scanAllSessions(
   }
   
   const dedupedChats = Array.from(chatMap.values());
-  console.log(`[Chat] Total after dedup: ${dedupedChats.length} chats`);
+  console.log(`[Chat] Total chats after scan: ${dedupedChats.length}`);
   
   return dedupedChats;
+}
+
+/**
+ * 扫描渠道的所有 Session 文件（简化版，不再使用）
+ */
+export async function scanChannelSessions(
+  openclawDir: string,
+  channelId: string,
+  accountId: string
+): Promise<Chat[]> {
+  // 不再使用，由 scanAllSessions 统一处理
+  return [];
 }
 
 /**
