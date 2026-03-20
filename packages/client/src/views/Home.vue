@@ -89,10 +89,23 @@ function handleWebSocketMessage(data: any) {
     const sessionFile = data.data.file;
     const message = data.data.message;
     
-    if (chatListRef.value && sessionFile) {
-      chatListRef.value.updateBySessionFile(sessionFile, { lastMessageAt: Date.now() });
+    // ✅ 提取消息实际时间戳
+    let messageTime = Date.now();
+    if (message) {
+      const msg = message.message || message;
+      if (msg.timestamp) {
+        messageTime = typeof msg.timestamp === 'number' ? msg.timestamp : new Date(msg.timestamp).getTime();
+      } else if (message.timestamp) {
+        messageTime = typeof message.timestamp === 'number' ? message.timestamp : new Date(message.timestamp).getTime();
+      }
     }
     
+    // ✅ 更新聊天列表时间
+    if (chatListRef.value && sessionFile) {
+      chatListRef.value.updateBySessionFile(sessionFile, { lastMessageAt: messageTime });
+    }
+    
+    // ✅ 追加消息到详情页
     if (selectedChat.value && messageDetailRef.value && sessionFile) {
       if (selectedChat.value.sessionFile === sessionFile && message) {
         const msg = message.message || message;
@@ -100,7 +113,7 @@ function handleWebSocketMessage(data: any) {
           id: message.id || `msg-${Date.now()}`,
           role: msg.role || 'user',
           content: msg.content || '',
-          timestamp: msg.timestamp || Date.now(),
+          timestamp: messageTime,
         });
       }
     }

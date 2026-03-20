@@ -15,8 +15,57 @@ import * as channel from '../channel';
 import * as chat from '../chat';
 import type { MonitorConfig } from '../types';
 
+// ✅ 定时同步任务
+let syncTimer: NodeJS.Timeout | null = null;
+
+export function startChatTimeSync(intervalMs: number = 60000): void {
+  if (syncTimer) {
+    clearInterval(syncTimer);
+  }
+  
+  syncTimer = setInterval(() => {
+    try {
+      // 获取所有 chats
+      const chats = dbExt.getChats(undefined, 100, 0);
+      
+      if (chats.length > 0) {
+        // 过滤掉没有 sessionFile 的 chats
+        const syncItems = chats
+          .filter(c => c.sessionFile)
+          .map(c => ({
+            chatId: c.id,
+            sessionFile: c.sessionFile!,
+          }));
+        
+        if (syncItems.length > 0) {
+          // 同步时间
+          const updated = dbExt.syncChatTimes(syncItems);
+          
+          if (updated > 0) {
+            console.log(`[Monitor] Synced ${updated} chat times`);
+          }
+        }
+      }
+    } catch (e) {
+      console.error('[Monitor] Error syncing chat times:', e);
+    }
+  }, intervalMs);
+  
+  console.log(`[Monitor] Chat time sync started, interval: ${intervalMs}ms`);
+}
+
+export function stopChatTimeSync(): void {
+  if (syncTimer) {
+    clearInterval(syncTimer);
+    syncTimer = null;
+  }
+}
+
 export function createExtendedRoutes(config: MonitorConfig): Hono {
   const api = new Hono();
+  
+  // ✅ 启动定时同步（1分钟）
+  startChatTimeSync(60000);
   
   // ==================== 渠道管理 ====================
   

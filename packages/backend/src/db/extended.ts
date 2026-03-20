@@ -214,6 +214,64 @@ export function saveChat(chat: Chat): void {
   );
 }
 
+/**
+ * 同步聊天时间（从消息文件读取最新时间）
+ */
+export function syncChatTimes(sessionFiles: { chatId: string; sessionFile: string }[]): number {
+  if (!db) return 0;
+  
+  const { execSync } = require('child_process');
+  let updated = 0;
+  
+  for (const { chatId, sessionFile } of sessionFiles) {
+    try {
+      if (!fs.existsSync(sessionFile) || !sessionFile.endsWith('.jsonl')) {
+        continue;
+      }
+      
+      // 使用 tail 读取最后 10 行（找最后一条消息）
+      const lastLines = execSync(`tail -n 10 "${sessionFile}"`, {
+        encoding: 'utf-8',
+        maxBuffer: 1024 * 1024,
+      }).trim();
+      
+      if (!lastLines) continue;
+      
+      // 解析最后一条消息
+      let lastMessageTime = 0;
+      for (const line of lastLines.split('\n').reverse()) {
+        if (!line.trim()) continue;
+        
+        try {
+          const msg = JSON.parse(line);
+          if (msg.type === 'message' && msg.message) {
+            const timestamp = msg.message.timestamp 
+              ? (typeof msg.message.timestamp === 'number' ? msg.message.timestamp : new Date(msg.message.timestamp).getTime())
+              : (msg.timestamp ? new Date(msg.timestamp).getTime() : 0);
+            
+            if (timestamp > lastMessageTime) {
+              lastMessageTime = timestamp;
+            }
+          }
+        } catch (e) {
+          // 忽略解析错误
+        }
+      }
+      
+      if (lastMessageTime > 0) {
+        // 更新数据库
+        const stmt = db!.prepare('UPDATE chats SET last_message_at = ? WHERE chat_id = ?');
+        stmt.run(lastMessageTime, chatId);
+        updated++;
+      }
+    } catch (e) {
+      console.error(`[DB] Error syncing time for ${chatId}:`, e);
+    }
+  }
+  
+  return updated;
+}
+
 export function getChats(channelId?: string, limit: number = 50, offset: number = 0, includeHidden: boolean = false): Chat[] {
   if (!db) throw new Error('Database not initialized');
   
