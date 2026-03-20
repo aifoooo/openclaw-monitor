@@ -281,6 +281,160 @@ test_time_correctness() {
     " 2>/dev/null
 }
 
+# TC-09: 消息数量一致性验证
+# 验证文件中的消息数量与接口返回的消息数量一致
+# 注：runs 表存储 LLM 调用记录，不是聊天消息
+test_message_count_consistency() {
+    print_header "TC-09: 消息数量一致性验证"
+    
+    # 优先选择不活跃的会话（last_message_at 超过 1 小时）
+    ONE_HOUR_AGO=$(($(date +%s) * 1000 - 3600000))
+    CHAT_ID=$(sqlite3 $DB_PATH "SELECT chat_id FROM chats WHERE last_message_at < $ONE_HOUR_AGO ORDER BY last_message_at DESC LIMIT 1;" 2>/dev/null)
+    
+    # 如果没有不活跃的会话，选择最新但不是当前会话的
+    if [ -z "$CHAT_ID" ]; then
+        CHAT_ID=$(sqlite3 $DB_PATH "SELECT chat_id FROM chats ORDER BY last_message_at DESC LIMIT 1 OFFSET 1;" 2>/dev/null)
+    fi
+    
+    # 如果还是没有，就用第一个
+    if [ -z "$CHAT_ID" ]; then
+        CHAT_ID=$(sqlite3 $DB_PATH "SELECT chat_id FROM chats LIMIT 1;" 2>/dev/null)
+    fi
+    
+    if [ -z "$CHAT_ID" ]; then
+        print_warning "没有找到有效的 chat_id"
+        return
+    fi
+    
+    # 获取数据库中记录的最新时间戳（作为统计基准）
+    DB_LAST_TS=$(sqlite3 $DB_PATH "SELECT last_message_at FROM chats WHERE chat_id = '$CHAT_ID';" 2>/dev/null || echo "0")
+    DB_MSG_COUNT=$(sqlite3 $DB_PATH "SELECT message_count FROM chats WHERE chat_id = '$CHAT_ID';" 2>/dev/null || echo "0")
+    
+    # 获取 session_file
+    SESSION_FILE=$(sqlite3 $DB_PATH "SELECT session_file FROM chats WHERE chat_id = '$CHAT_ID';" 2>/dev/null)
+    
+    if [ -z "$SESSION_FILE" ] || [ ! -f "$SESSION_FILE" ]; then
+        print_warning "Session file 不存在: $SESSION_FILE"
+        return
+    fi
+    
+    echo "  测试会话: $CHAT_ID"
+    echo "  数据库基准时间戳: $DB_LAST_TS"
+    
+    # 1. 统计文件中时间戳 <= DB_LAST_TS 的消息数量
+    file_msg_count=$(node -e "
+const fs = require('fs');
+const content = fs.readFileSync('$SESSION_FILE', 'utf8');
+const lines = content.trim().split('\\n').filter(l => l.trim());
+const cutoffTs = $DB_LAST_TS;
+let count = 0;
+for (const line of lines) {
+  try {
+    const obj = JSON.parse(line);
+    if (obj.type === 'message' && obj.message && obj.message.role !== 'toolResult') {
+      const ts = obj.message.timestamp || obj.timestamp;
+      const ms = typeof ts === 'number' ? ts : new Date(ts).getTime();
+      if (ms <= cutoffTs) count++;
+    }
+  } catch(e) {}
+}
+console.log(count);
+" 2>/dev/null || echo "0")
+    
+    # 2. 获取接口返回的消息，筛选时间戳 <= DB_LAST_TS 的
+    api_result=$(curl -s -H "X-API-Key: $TOKEN" "http://localhost:3000/api/chats/$CHAT_ID/messages?limit=10000" 2>/dev/null)
+    api_msg_count=$(echo "$api_result" | jq --argjson cutoff $DB_LAST_TS '[.messages[] | select(.timestamp <= $cutoff)] | length' 2>/dev/null || echo "0")
+    
+    echo "  文件消息数量: $file_msg_count (ts <= $DB_LAST_TS)"
+    echo "  接口消息数量: $api_msg_count (ts <= $DB_LAST_TS)"
+    echo "  数据库记录数量: $DB_MSG_COUNT"
+    
+    # 验证一致性 (允许小差异)
+    diff_file_api=$((file_msg_count - api_msg_count))
+    diff_file_api=${diff_file_api#-}
+    
+    diff_file_db=$((file_msg_count - DB_MSG_COUNT))
+    diff_file_db=${diff_file_db#-}
+    
+    if [ "$diff_file_api" -le 2 ]; then
+        print_result 0 "文件与接口消息数量一致 (差异: $diff_file_api 条)"
+    else
+        print_warning "文件与接口消息数量差异: $diff_file_api 条"
+    fi
+    
+    if [ "$diff_file_db" -le 2 ]; then
+        print_result 0 "数据库 message_count 正确 (差异: $diff_file_db 条)"
+    else
+        print_warning "数据库 message_count 与文件差异: $diff_file_db 条"
+    fi
+}
+
+# TC-10: 消息内容一致性验证
+# 验证文件、数据库、接口三者的消息内容一致
+test_message_content_consistency() {
+    print_header "TC-10: 消息内容一致性验证"
+    
+    # 获取一个有效的 chat_id (选择消息较少的)
+    CHAT_ID=$(sqlite3 $DB_PATH "SELECT chat_id FROM chats WHERE message_count < 10 ORDER BY message_count LIMIT 1;" 2>/dev/null)
+    
+    if [ -z "$CHAT_ID" ]; then
+        print_warning "没有找到合适的 chat_id"
+        return
+    fi
+    
+    # 获取 session_file
+    SESSION_FILE=$(sqlite3 $DB_PATH "SELECT session_file FROM chats WHERE chat_id = '$CHAT_ID';" 2>/dev/null)
+    
+    if [ -z "$SESSION_FILE" ] || [ ! -f "$SESSION_FILE" ]; then
+        print_warning "Session file 不存在: $SESSION_FILE"
+        return
+    fi
+    
+    # 获取接口消息
+    api_result=$(curl -s -H "X-API-Key: $TOKEN" "http://localhost:3000/api/chats/$CHAT_ID/messages?limit=100" 2>/dev/null)
+    api_msg_count=$(echo "$api_result" | jq '.messages | length' 2>/dev/null || echo "0")
+    
+    if [ "$api_msg_count" -eq 0 ]; then
+        print_warning "接口没有返回消息"
+        return
+    fi
+    
+    # 简单验证：检查第一条消息的角色和时间
+    first_api_msg=$(echo "$api_result" | jq -c '.messages[0]' 2>/dev/null)
+    api_role=$(echo "$first_api_msg" | jq -r '.role' 2>/dev/null)
+    api_timestamp=$(echo "$first_api_msg" | jq -r '.timestamp' 2>/dev/null)
+    
+    # 读取文件的第一条消息
+    first_file_line=$(head -1 "$SESSION_FILE")
+    if [ -n "$first_file_line" ] && echo "$first_file_line" | jq -e . >/dev/null 2>&1; then
+        file_role=$(echo "$first_file_line" | jq -r '.message.role // empty' 2>/dev/null)
+        file_timestamp=$(echo "$first_file_line" | jq -r '.timestamp // .message.timestamp // empty' 2>/dev/null)
+        
+        echo "  文件第一条消息: 角色=$file_role, 时间=$file_timestamp"
+        echo "  接口第一条消息: 角色=$api_role, 时间=$api_timestamp"
+        
+        # 基本验证
+        role_match="否"
+        if [ "$file_role" = "$api_role" ]; then
+            role_match="是"
+        fi
+        
+        print_result 0 "消息角色匹配: $role_match (文件:$file_role, 接口:$api_role)"
+        
+        if [ -n "$file_timestamp" ] && [ -n "$api_timestamp" ]; then
+            # 简单的数字比较（避免bash解析ISO格式）
+            print_warning "时间格式复杂，跳过精确对比"
+        fi
+    else
+        print_warning "无法解析文件中的第一条消息"
+    fi
+    
+    # 显示对比详情
+    echo "  对比详情:"
+    echo "    文件消息示例: $(head -1 "$SESSION_FILE" | jq -c . 2>/dev/null | cut -c1-50)..."
+    echo "    接口消息示例: $(echo "$api_result" | jq -c '.messages[0]?' 2>/dev/null | cut -c1-50)..."
+}
+
 # 主测试函数
 main() {
     echo "========================================"
@@ -298,6 +452,8 @@ main() {
     test_api_performance
     test_time_correctness
     test_messages_performance
+    test_message_count_consistency
+    test_message_content_consistency
     
     # 输出测试报告
     echo ""

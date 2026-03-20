@@ -132,15 +132,37 @@ export function getCacheTracesByRunId(_runId: string, _limit: number = 5000): DB
 
 // ==================== Run 操作 ====================
 
+/**
+ * 从 sessionKey 中提取 chat_id 和 channel_id
+ * sessionKey 格式: agent:{agent_name}:{channel}:{chat_type}:{user_id}
+ * chat_id 格式: {chat_type}:{user_id}
+ */
+function extractFromSessionKey(sessionKey: string): { chatId: string | null; channelId: string | null } {
+  const parts = sessionKey.split(':');
+  
+  // 格式: agent:{agent_name}:{channel}:{chat_type}:{user_id}
+  if (parts.length >= 5 && parts[0] === 'agent') {
+    const channelId = parts[2];  // qqbot, feishu, etc.
+    const chatId = parts.slice(3).join(':');  // direct:user_id or group:group_id
+    return { chatId, channelId };
+  }
+  
+  return { chatId: null, channelId: null };
+}
+
 export function saveRun(run: Run): void {
   const now = Date.now();
+  
+  // 从 sessionKey 提取 chat_id 和 channel_id
+  const { chatId, channelId } = extractFromSessionKey(run.sessionKey);
+  
   const stmt = getDB().prepare(`
     INSERT INTO runs (
       run_id, session_id, session_key, provider, model_id,
       workspace_dir, started_at, completed_at, status,
       input_messages, output_messages, message_count, stages, error,
-      created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      created_at, updated_at, chat_id, channel_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(run_id) DO UPDATE SET
       completed_at = excluded.completed_at,
       status = excluded.status,
@@ -148,7 +170,9 @@ export function saveRun(run: Run): void {
       output_messages = excluded.output_messages,
       stages = excluded.stages,
       error = excluded.error,
-      updated_at = excluded.updated_at
+      updated_at = excluded.updated_at,
+      chat_id = excluded.chat_id,
+      channel_id = excluded.channel_id
   `);
   
   stmt.run(
@@ -167,7 +191,9 @@ export function saveRun(run: Run): void {
     JSON.stringify(run.stages),
     run.error || null,
     now,
-    now
+    now,
+    chatId,
+    channelId
   );
 }
 

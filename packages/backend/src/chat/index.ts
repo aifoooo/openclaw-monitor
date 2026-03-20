@@ -494,7 +494,8 @@ export async function getChatMessages(
       const msg = JSON.parse(line);
       
       // OpenClaw 格式：{type: "message", message: {role, content, timestamp}}
-      if (msg.type === 'message' && msg.message) {
+      // ✅ 排除 toolResult 类型（工具调用结果不应作为独立消息）
+      if (msg.type === 'message' && msg.message && msg.message.role !== 'toolResult') {
         const timestamp = msg.message.timestamp 
           ? (typeof msg.message.timestamp === 'number' ? msg.message.timestamp : new Date(msg.message.timestamp).getTime())
           : (msg.timestamp ? new Date(msg.timestamp).getTime() : Date.now());

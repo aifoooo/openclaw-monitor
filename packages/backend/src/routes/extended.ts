@@ -18,35 +18,50 @@ import type { MonitorConfig } from '../types';
 // ✅ 定时同步任务
 let syncTimer: NodeJS.Timeout | null = null;
 
-export function startChatTimeSync(intervalMs: number = 60000): void {
+export function startChatTimeSync(intervalMs: number = 60000, config?: MonitorConfig): void {
   if (syncTimer) {
     clearInterval(syncTimer);
   }
   
   syncTimer = setInterval(() => {
     try {
-      // 获取所有 chats
-      const chats = dbExt.getChats(undefined, 100, 0);
+      if (!config) {
+        console.error('[Monitor] No config available for sync');
+        return;
+      }
       
-      if (chats.length > 0) {
-        // 过滤掉没有 sessionFile 的 chats
-        const syncItems = chats
-          .filter(c => c.sessionFile)
-          .map(c => ({
-            chatId: c.id,
-            sessionFile: c.sessionFile!,
-            sessionKey: c.sessionKey,  // ✅ 添加 sessionKey
-          }));
+      // ✅ 每分钟同步时间和 session_file
+      // 1. 重新扫描所有 session（从 sessions.json 读取最新的 sessionFile）
+      const channels = dbExt.getChannels();
+      chat.scanAllSessions(config.openclawDir, channels).then(newChats => {
+        // 2. 保存（会更新 session_file 字段）
+        newChats.forEach(ch => dbExt.saveChat(ch));
         
-        if (syncItems.length > 0) {
-          // 同步时间
-          const updated = dbExt.syncChatTimes(syncItems);
+        // 3. 同步时间
+        const chats = dbExt.getChats(undefined, 100, 0);
+        
+        if (chats.length > 0) {
+          // 过滤掉没有 sessionFile 的 chats
+          const syncItems = chats
+            .filter(c => c.sessionFile)
+            .map(c => ({
+              chatId: c.id,
+              sessionFile: c.sessionFile!,
+              sessionKey: c.sessionKey,
+            }));
           
-          if (updated > 0) {
-            console.log(`[Monitor] Synced ${updated} chat times`);
+          if (syncItems.length > 0) {
+            // 同步时间
+            const updated = dbExt.syncChatTimes(syncItems);
+            
+            if (updated > 0) {
+              console.log(`[Monitor] Synced ${updated} chat times`);
+            }
           }
         }
-      }
+      }).catch(e => {
+        console.error('[Monitor] Error in sync task:', e);
+      });
     } catch (e) {
       console.error('[Monitor] Error syncing chat times:', e);
     }
@@ -66,7 +81,7 @@ export function createExtendedRoutes(config: MonitorConfig): Hono {
   const api = new Hono();
   
   // ✅ 启动定时同步（1分钟）
-  startChatTimeSync(60000);
+  startChatTimeSync(60000, config);
   
   // ==================== 渠道管理 ====================
   
