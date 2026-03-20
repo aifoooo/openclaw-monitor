@@ -41,7 +41,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref, onMounted, onUnmounted, nextTick } from 'vue';
 import ChatList from '../components/ChatList.vue';
 import MessageDetail from '../components/MessageDetail.vue';
 import { fetchAccounts, createWebSocket } from '../services/api';
@@ -63,6 +63,7 @@ const chatListRef = ref<{
   refresh: () => void; 
   updateChat: (id: string, updates: any) => void;
   updateBySessionFile: (sessionFile: string, updates: any) => void;
+  selectFirst: () => void;
 } | null>(null);
 const messageDetailRef = ref<{ refresh: () => void; appendMessage: (msg: any) => void } | null>(null);
 let ws: WebSocket | null = null;
@@ -77,9 +78,15 @@ async function loadAccounts() {
 }
 
 function onAccountChange() {
-  selectedChat.value = null;
   // ✅ 保存选择到 localStorage
   localStorage.setItem('openclaw-monitor-selected-account', selectedAccount.value);
+  
+  // ✅ 自动选中第一个聊天
+  nextTick(() => {
+    if (chatListRef.value) {
+      chatListRef.value.selectFirst();
+    }
+  });
 }
 
 function onChatSelected(chat: any) {
@@ -157,6 +164,13 @@ onMounted(() => {
   if (savedAccount) {
     selectedAccount.value = savedAccount;
   }
+  
+  // ✅ 自动选中第一个聊天
+  nextTick(() => {
+    if (chatListRef.value) {
+      chatListRef.value.selectFirst();
+    }
+  });
 });
 
 onUnmounted(() => {

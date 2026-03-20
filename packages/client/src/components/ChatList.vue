@@ -121,6 +121,11 @@ defineExpose({
   refresh: loadChats,
   updateChat,
   updateBySessionFile,
+  selectFirst: () => {
+    if (filteredChats.value.length > 0) {
+      selectChat(filteredChats.value[0]);
+    }
+  },
 });
 
 function selectChat(chat: Chat) {
