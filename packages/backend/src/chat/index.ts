@@ -444,17 +444,16 @@ export async function scanChannelSessions(
 }
 
 /**
- * 获取聊天的消息列表
+ * 获取聊天的消息列表（优化版）
  * 
- * 从 sessionFile 指定的 .jsonl 文件读取消息
- * 支持 OpenClaw 的消息格式：{type: "message", message: {role, content}}
+ * 使用 tail 命令从文件末尾读取，避免读取整个大文件
  */
 export async function getChatMessages(
   sessionFile: string,
   limit: number = 50,
   offset: number = 0
 ): Promise<Message[]> {
-  console.log(`[Chat] Looking for messages in: ${sessionFile}`);
+  console.log(`[Chat] Loading messages from: ${sessionFile}, limit=${limit}, offset=${offset}`);
   
   // 检查 sessionFile 是否存在且是 .jsonl 文件
   if (!sessionFile || !fs.existsSync(sessionFile)) {
@@ -467,16 +466,28 @@ export async function getChatMessages(
     return [];
   }
   
-  // 收集所有消息
+  // 使用 tail 命令读取文件末尾的行（性能优化）
+  // 需要读取 limit + offset 行，然后取后 limit 行
+  const linesToRead = limit + offset;
+  const { execSync } = require('child_process');
+  
+  let lines: string[];
+  try {
+    // 使用 tail -n 读取最后 N 行
+    const output = execSync(`tail -n ${linesToRead} "${sessionFile}"`, {
+      encoding: 'utf-8',
+      maxBuffer: 50 * 1024 * 1024, // 50MB buffer
+    });
+    lines = output.trim().split('\n').filter((l: string) => l.trim());
+  } catch (e) {
+    console.error(`[Chat] Failed to read file with tail:`, e);
+    return [];
+  }
+  
+  // 解析消息
   const allMessages: Message[] = [];
   
-  const fileStream = fs.createReadStream(sessionFile, { encoding: 'utf-8' });
-  const rl = readline.createInterface({
-    input: fileStream,
-    crlfDelay: Infinity
-  });
-  
-  for await (const line of rl) {
+  for (const line of lines) {
     if (!line.trim()) continue;
     
     try {
@@ -539,10 +550,12 @@ export async function getChatMessages(
   // 按时间戳排序（最新的在前面）
   allMessages.sort((a, b) => b.timestamp - a.timestamp);
   
-  // 应用分页（offset=0 返回最新的消息）
-  const pagedMessages = allMessages.slice(offset, offset + limit);
+  // 应用分页：从 offset 开始取 limit 条
+  // tail 返回的是最后 N 行，我们需要跳过前 offset 条
+  const startIndex = Math.max(0, allMessages.length - limit);
+  const pagedMessages = allMessages.slice(startIndex);
   
-  console.log(`[Chat] Loaded ${pagedMessages.length} messages (total: ${allMessages.length}, offset: ${offset})`);
+  console.log(`[Chat] Loaded ${pagedMessages.length} messages from tail (${lines.length} lines read)`);
   return pagedMessages;
 }
 

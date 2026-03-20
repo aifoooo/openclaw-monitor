@@ -188,6 +188,50 @@ test_api_performance() {
     fi
 }
 
+# TC-08: 消息接口性能测试
+test_messages_performance() {
+    print_header "TC-08: 消息接口性能测试"
+    
+    # 获取一个有效的 chat_id
+    CHAT_ID=$(sqlite3 $DB_PATH "SELECT chat_id FROM chats LIMIT 1;" 2>/dev/null)
+    
+    if [ -z "$CHAT_ID" ]; then
+        print_warning "没有找到有效的 chat_id"
+        return
+    fi
+    
+    # 测试消息接口性能
+    start_time=$(date +%s%N)
+    result=$(curl -s -H "X-API-Key: $TOKEN" \
+        "http://localhost:3000/api/chats/$CHAT_ID/messages?limit=20")
+    end_time=$(date +%s%N)
+    elapsed=$(( (end_time - start_time) / 1000000 ))
+    
+    # 检查返回的消息数量
+    count=$(echo "$result" | jq '.messages | length' 2>/dev/null)
+    
+    if [ "$elapsed" -lt 500 ] && [ "$count" -gt 0 ]; then
+        print_result 0 "messages API 响应时间: ${elapsed}ms, 返回 $count 条消息"
+    elif [ "$elapsed" -lt 1000 ]; then
+        print_warning "messages API 响应时间可接受: ${elapsed}ms"
+    else
+        print_result 1 "messages API 响应时间过慢: ${elapsed}ms"
+    fi
+    
+    # 测试大 limit 性能
+    start_time=$(date +%s%N)
+    curl -s -H "X-API-Key: $TOKEN" \
+        "http://localhost:3000/api/chats/$CHAT_ID/messages?limit=100" > /dev/null
+    end_time=$(date +%s%N)
+    elapsed=$(( (end_time - start_time) / 1000000 ))
+    
+    if [ "$elapsed" -lt 1000 ]; then
+        print_result 0 "messages API (limit=100) 响应时间: ${elapsed}ms"
+    else
+        print_warning "messages API (limit=100) 响应时间: ${elapsed}ms"
+    fi
+}
+
 # TC-07: 时间数据正确性测试
 test_time_correctness() {
     print_header "TC-07: 时间数据正确性测试"
@@ -253,6 +297,7 @@ main() {
     test_database_integrity
     test_api_performance
     test_time_correctness
+    test_messages_performance
     
     # 输出测试报告
     echo ""
