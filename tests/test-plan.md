@@ -467,3 +467,43 @@ sqlite3 /var/lib/openclaw-monitor/monitor.db \
 - 缓存跟踪: `/root/.openclaw/logs/cache-trace.jsonl`
 - 后端代码: `/root/ws-mime-qq/openclaw-monitor/packages/backend/`
 - 前端代码: `/root/ws-mime-qq/openclaw-monitor/packages/client/`
+
+---
+
+### TC-07: 时间数据正确性测试
+**测试目的**: 验证 chats 表中的时间数据正确
+
+**测试步骤**:
+1. 获取当前时间戳
+2. 检查数据库中的 `last_message_at` 是否超过当前时间
+3. 检查标题中的时间格式是否正确
+
+**预期结果**:
+- 所有时间数据都在合理范围内（不超过当前时间）
+- 标题格式为 `MM-DD HH:MM (sessionId)`
+
+**相关缺陷**:
+- BUG-004: 时间显示全部为同一时间（已修复）
+
+---
+
+## 修复记录
+
+### BUG-004: 时间显示全部为同一时间
+**问题描述**: 所有 chats 的 last_message_at 显示相同的时间
+
+**原因**:
+- 手动插入数据时使用了错误的时间戳
+- sessions.json 中的 updatedAt 时间没有正确读取
+
+**修复方案**:
+- 清空 chats 表并重新同步
+- 从 sessions.json 中读取正确的 updatedAt 时间
+
+**验证**:
+- TC-07 测试通过
+- 时间数据正确显示
+
+---
+
+*测试计划更新时间: 2026-03-20 21:04*

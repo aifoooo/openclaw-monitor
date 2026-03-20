@@ -188,6 +188,55 @@ test_api_performance() {
     fi
 }
 
+# TC-07: 时间数据正确性测试
+test_time_correctness() {
+    print_header "TC-07: 时间数据正确性测试"
+    
+    # 获取当前时间戳（毫秒）
+    current_time=$(($(date +%s) * 1000))
+    
+    # 获取数据库中的时间数据
+    result=$(sqlite3 $DB_PATH "
+    SELECT 
+      chat_id,
+      last_message_at,
+      title
+    FROM chats
+    ORDER BY last_message_at DESC
+    LIMIT 5;
+    " 2>/dev/null)
+    
+    # 检查时间是否合理（不超过当前时间）
+    error_count=0
+    while IFS='|' read -r chat_id last_message_at title; do
+        if [ -n "$last_message_at" ] && [ "$last_message_at" -gt "$current_time" ]; then
+            echo "  错误: $chat_id 的时间 ($last_message_at) 超过当前时间"
+            error_count=$((error_count + 1))
+        fi
+        
+        # 检查时间格式是否正确（标题中包含时间）
+        if [[ ! "$title" =~ [0-9]{2}-[0-9]{2}\ [0-9]{2}:[0-9]{2} ]]; then
+            echo "  警告: $chat_id 的标题格式不正确: $title"
+        fi
+    done <<< "$result"
+    
+    if [ "$error_count" -eq 0 ]; then
+        print_result 0 "所有时间数据都在合理范围内"
+    else
+        print_result 1 "发现 $error_count 个时间数据错误"
+    fi
+    
+    # 显示时间数据
+    echo "时间数据验证:"
+    sqlite3 $DB_PATH "
+    SELECT 
+      substr(title, 1, 20) as title,
+      datetime(last_message_at/1000, 'unixepoch', 'localtime') as time
+    FROM chats
+    ORDER BY last_message_at DESC;
+    " 2>/dev/null
+}
+
 # 主测试函数
 main() {
     echo "========================================"
@@ -203,6 +252,7 @@ main() {
     test_session_integrity
     test_database_integrity
     test_api_performance
+    test_time_correctness
     
     # 输出测试报告
     echo ""
