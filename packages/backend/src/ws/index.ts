@@ -164,6 +164,12 @@ export function resendUnacked(ws: WebSocketType, sinceSeq?: number): void {
  * 处理客户端消息
  */
 export function handleClientMessage(ws: WebSocketType, data: any): void {
+  // ✅ 收到任何消息都更新 lastPong（保持连接活跃）
+  const info = connections.get(ws);
+  if (info) {
+    info.lastPong = Date.now();
+  }
+  
   try {
     const parsed = JSON.parse(data.toString());
     
@@ -182,12 +188,10 @@ export function handleClientMessage(ws: WebSocketType, data: any): void {
       resendUnacked(ws, parsed.lastSeq);
     }
     
-    // pong 响应（客户端主动回复）
-    if (parsed.type === 'pong') {
-      const info = connections.get(ws);
-      if (info) {
-        info.lastPong = Date.now();
-      }
+    // ping 消息（前端心跳）
+    if (parsed.type === 'ping') {
+      // ✅ 已经更新了 lastPong，不需要额外处理
+      // 可以选择响应 pong，但浏览器会自动响应协议层的 ping
     }
   } catch (e) {
     console.error('[WS] Failed to handle message:', e);
@@ -214,6 +218,7 @@ export function addConnection(ws: WebSocketType): void {
     const info = connections.get(ws);
     if (info) {
       info.lastPong = Date.now();
+      console.log('[WS] Received pong from client');
     }
   });
   

@@ -134,15 +134,25 @@ function connectWebSocket() {
   if (ws) {
     ws.onopen = () => {
       connected.value = true;
-      // 发送心跳包
+      
+      // ✅ 浏览器会自动响应 ping，不需要手动处理
+      // 但我们需要定期发送消息保持连接活跃
       const heartbeat = setInterval(() => {
         if (ws && ws.readyState === WebSocket.OPEN) {
+          // ✅ 发送心跳包，后端会更新 lastPong
           ws.send(JSON.stringify({ type: 'ping' }));
         }
       }, 30000); // 每30秒发送一次心跳
+      
       // 存储心跳定时器
       (ws as any)._heartbeat = heartbeat;
     };
+    
+    // ✅ 监听 ping（浏览器会自动响应 pong，但我们可以记录）
+    ws.onping = () => {
+      console.log('[WS] Received ping from server');
+    };
+    
     ws.onclose = () => { 
       connected.value = false;
       // 清除心跳
