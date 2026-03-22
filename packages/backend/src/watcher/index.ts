@@ -56,18 +56,19 @@ export function startMessageWatcher(
     
     // ✅ 立即扫描新文件并创建数据库记录
     try {
-      const chat = require('../chat');
+      const { parseSessionFile, AGENT_TO_CHANNEL_MAP } = require('../chat');
       const db = require('../db/extended');
       
       // 从文件路径提取 agent 信息
       const match = filePath.match(/\/agents\/([^/]+)\//);
       const agentName = match ? match[1] : 'unknown';
       
-      // 获取 channel 和 account
-      const { channelId, accountId } = chat.getChannelAndAccount(agentName);
+      // 获取 channelId（从映射表）
+      const channelId = AGENT_TO_CHANNEL_MAP[agentName] || 'unknown';
+      const accountId = agentName;
       
       // 解析 session 文件
-      const newChat = await chat.parseSessionFile(filePath, channelId, accountId);
+      const newChat = await parseSessionFile(filePath, channelId, accountId);
       
       if (newChat) {
         // 保存到数据库

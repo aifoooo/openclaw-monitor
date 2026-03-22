@@ -1,268 +1,309 @@
-# OpenClaw Monitor 架构设计
+# OpenClaw Monitor 架构文档
 
-> 最后更新：2026-03-18
+## 一、系统定位
 
----
+**OpenClaw Monitor = OpenClaw 的监控面板**
 
-## 一、系统架构
-
-![系统架构](images/openclaw-monitor-arch.png)
+实时监控 OpenClaw 所有 Agent 的运行状态，让 AI Agent 的行为**可见、可查、可分析**。
 
 ---
 
-## 二、数据模型
+## 二、核心架构
 
-![数据模型](images/data-model.png)
-
-### 字段说明
-
-| 模型 | 关键字段 | 说明 |
-|------|----------|------|
-| **Channel** | id, name, type, status | 渠道信息，从 `openclaw.json` 解析 |
-| **Chat** | id, channelId, sessionKey, title | 聊天信息，从 session 文件解析 |
-| **Message** | id, runId, role, content, timestamp | 消息内容，从 session 文件解析 |
-| **Run** | id, sessionId, provider, modelId, status | 请求信息，从 Cache Trace 解析 |
-| **Operation** | type, toolName, durationMs | 操作信息，从 Gateway 日志解析 |
-
----
-
-## 三、数据源
-
-### 3.1 Cache Trace
-
-**位置**：`~/.openclaw/logs/cache-trace.jsonl`
-
-**配置要求**：
-
-```json
-{
-  "diagnostics": {
-    "enabled": true,
-    "cacheTrace": {
-      "enabled": true,
-      "includeMessages": true,
-      "includePrompt": false,
-      "includeSystem": false
-    }
-  }
-}
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         用户层                                   │
+│                    QQ / 飞书 / 其他渠道                          │
+└─────────────────────────────────────────────────────────────────┘
+                                ↓ 发送消息
+┌─────────────────────────────────────────────────────────────────┐
+│                       OpenClaw Agent                            │
+│              (mime-qq, mime-feishu, wife-qq 等)                │
+│                                                                 │
+│  运行时产生:                                                     │
+│  - 会话文件: ~/.openclaw/agents/*/sessions/*.jsonl             │
+│  - 备份文件: *.jsonl.reset.时间戳                               │
+│  - Cache Trace: ~/.openclaw/logs/cache-trace.jsonl             │
+└─────────────────────────────────────────────────────────────────┘
+                                ↓ 文件变化
+┌─────────────────────────────────────────────────────────────────┐
+│                       文件监视器                                 │
+│                      (chokidar)                                 │
+│                                                                 │
+│  监听事件:                                                       │
+│  - add: 新会话文件创建 → 立即解析并添加到数据库                   │
+│  - change: 会话文件修改 → tail 读取最后一行，更新统计数据         │
+└─────────────────────────────────────────────────────────────────┘
+                                ↓
+┌─────────────────────────────────────────────────────────────────┐
+│                       解析层                                     │
+│                    (chat 模块)                                  │
+│                                                                 │
+│  核心函数:                                                       │
+│  - parseSessionFile: 解析会话文件，提取消息                      │
+│  - extractTitle: 生成聊天标题（时间 + shortId）                  │
+│  - getChannelAndAccount: 从 agent 名称映射渠道                   │
+│                                                                 │
+│  特殊处理:                                                       │
+│  - 备份文件检测: .jsonl.reset.* 或 .jsonl.时间戳                 │
+│  - 隐藏标记: isHidden = true                                    │
+│  - 消息过滤: 排除 toolResult 类型                                │
+└─────────────────────────────────────────────────────────────────┘
+                                ↓
+┌─────────────────────────────────────────────────────────────────┐
+│                       存储层                                     │
+│                      (SQLite)                                   │
+│                                                                 │
+│  核心表:                                                         │
+│  - chats: 聊天记录（含 is_hidden 字段）                          │
+│  - channels: 渠道配置                                           │
+│  - runs: 运行记录                                               │
+│  - cache_traces: 缓存追踪                                       │
+│  - operations: 操作记录                                         │
+└─────────────────────────────────────────────────────────────────┘
+                                ↓
+┌─────────────────────────────────────────────────────────────────┐
+│                       接口层                                     │
+│                   (REST API + WebSocket)                        │
+│                                                                 │
+│  REST API:                                                      │
+│  - GET /api/chats: 获取聊天列表（默认排除 is_hidden）            │
+│  - GET /api/chats/:id/messages: 获取消息详情                    │
+│  - POST /api/chats/scan: 手动触发扫描                           │
+│  - POST /api/chats/sync: 同步会话文件                           │
+│                                                                 │
+│  WebSocket:                                                     │
+│  - new_message: 新消息推送                                       │
+│  - run:started: Run 开始                                        │
+│  - run:completed: Run 完成                                       │
+│  - file_added: 新文件创建（前端刷新聊天列表）                    │
+└─────────────────────────────────────────────────────────────────┘
+                                ↓
+┌─────────────────────────────────────────────────────────────────┐
+│                       展示层                                     │
+│                      (Vue 3)                                    │
+│                                                                 │
+│  核心组件:                                                       │
+│  - Home.vue: 主页面，管理 WebSocket 连接                         │
+│  - ChatList.vue: 聊天列表，支持选择和刷新                        │
+│  - MessageDetail.vue: 消息详情，支持分页加载                     │
+│                                                                 │
+│  关键逻辑:                                                       │
+│  - WebSocket 连接: 建立实时推送                                  │
+│  - handleWebSocketMessage: 处理推送消息                          │
+│    - file_added → 刷新聊天列表                                  │
+│    - new_message → 更新聊天时间和消息                            │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-> **注意**：关闭 `includePrompt` 和 `includeSystem` 可减少 90% 文件大小。
+---
 
-**Stage 类型**：
+## 三、核心业务流程
 
-| Stage | 说明 | 包含信息 |
-|-------|------|----------|
-| `stream:context` | LLM 输入 | **messages[], provider, modelId** |
-| `session:after` | LLM 输出 | **messages[], usage, cost** |
+### 3.1 用户发送消息
 
-### 3.2 Gateway 日志
-
-**位置**：`/tmp/openclaw/openclaw-*.log`
-
-**需要配置 DEBUG 级别**：
-
-```json
-{
-  "logging": {
-    "level": "debug"
-  }
-}
+```
+1. 用户 → OpenClaw Agent（QQ/飞书）
+2. Agent 追加消息到会话文件
+3. 文件监视器检测到 change 事件
+4. tail 读取最后一行，解析消息
+5. 更新数据库（message_count++, last_message_at）
+6. WebSocket 推送 new_message 事件
+7. 前端收到推送：
+   - 更新聊天时间（变成"刚刚"）
+   - 如果当前选中该聊天，追加消息到列表
 ```
 
-**包含信息**：
+### 3.2 用户执行 /new
 
-| 日志类型 | 示例 | 说明 |
-|---------|------|------|
-| 工具执行 | `embedded run tool start/end: tool=exec` | 工具名称、耗时 |
-| LLM 调用 | `embedded run start/prompt end` | provider, model, 耗时 |
-| 上下文诊断 | `[context-diag] messages=73` | 上下文大小 |
+```
+1. 用户发送 /new 命令
+2. Agent 重命名当前会话：xxx.jsonl → xxx.jsonl.reset.时间戳
+3. Agent 创建新的空会话文件（相同 sessionId）
+4. 文件监视器检测到新文件：
+   a. 解析新会话文件
+   b. 检测到是备份文件 → 标记 isHidden = true
+   c. 检测到是当前会话 → 正常添加
+5. 保存到数据库
+6. WebSocket 推送 file_added 事件
+7. 前端刷新聊天列表：
+   - 只显示 is_hidden = false 的聊天
+   - 新会话显示在顶部
+```
 
-### 3.3 OpenClaw 配置
+### 3.3 定时同步任务
 
-**位置**：`~/.openclaw/openclaw.json`
-
-**包含信息**：渠道配置、模型配置、诊断配置
-
-### 3.4 Session 文件
-
-**位置**：
-- `~/.openclaw/sessions/*.jsonl` - 全局 Session
-- `~/.openclaw/qqbot/sessions/*.json` - QQ Bot Session
-
----
-
-## 四、数据流
-
-![数据流](images/data-flow.png)
-
-### 流程说明
-
-1. **数据采集**：Watcher 监听文件变更 → Parser 解析日志 → Merger 合并数据
-2. **数据存储**：解析结果聚合后存入 SQLite（仅 runs 表）
-3. **实时推送**：WebSocket 推送 run:started/completed/updated 事件
-4. **前端展示**：Vue 3 前端实时更新渠道、聊天、消息、Run 详情
+```
+每分钟执行：
+1. 扫描所有会话文件（scanAllSessions）
+2. 更新数据库（新增缺失的，删除不存在的）
+3. 同步聊天时间（从文件修改时间）
+4. 清理过期数据
+```
 
 ---
 
-## 五、API 接口
+## 四、关键设计决策
 
-### 5.1 渠道管理
+### 4.1 备份文件处理
 
-| 接口 | 方法 | 说明 |
-|------|------|------|
-| `/api/channels` | GET | 获取渠道列表 |
-| `/api/channels/:channelId` | GET | 获取渠道详情 |
-| `/api/channels/refresh` | POST | 刷新渠道信息 |
+**问题**：OpenClaw 执行 `/new` 时，会重命名当前会话为备份文件，导致重复显示。
 
-### 5.2 聊天管理
+**解决方案**：
+- 检测备份文件（`.jsonl.reset.*` 或 `.jsonl.时间戳`）
+- 标记为隐藏（`is_hidden = true`）
+- 前端默认不显示隐藏会话
+- 数据库保留历史记录
 
-| 接口 | 方法 | 说明 |
-|------|------|------|
-| `/api/chats` | GET | 获取聊天列表（支持 channelId 过滤） |
-| `/api/chats/:chatId` | GET | 获取聊天详情 |
-| `/api/chats/:chatId/messages` | GET | 获取聊天消息 |
+### 4.2 文件监视策略
 
-### 5.3 Run 管理
+**问题**：如何平衡实时性和性能？
 
-| 接口 | 方法 | 说明 |
-|------|------|------|
-| `/api/runs` | GET | 获取 Run 列表（支持分页、排序） |
-| `/api/runs/:runId` | GET | 获取 Run 详情 |
-| `/api/runs/:runId/operations` | GET | 获取 Run 操作列表 |
+**解决方案**：
+- **新文件（add 事件）**：立即解析并添加到数据库
+- **文件修改（change 事件）**：只 tail 最后一行，避免读取整个文件
+- **定时同步**：每分钟完整扫描一次，确保数据一致性
 
-### 5.4 系统接口
+### 4.3 消息统计准确性
 
-| 接口 | 方法 | 说明 |
-|------|------|------|
-| `/health` | GET | 健康检查 |
-| `/api/stats` | GET | 统计信息 |
+**问题**：toolResult 消息不应该计入 messageCount。
+
+**解决方案**：
+- `parseSessionFile`: 排除 `role === 'toolResult'` 的消息
+- 只统计用户和助手的对话消息
+
+### 4.4 前端实时性
+
+**问题**：WebSocket 断开后，用户看不到新消息。
+
+**解决方案**：
+- 处理 `file_added` 事件，刷新聊天列表
+- 处理 `new_message` 事件，更新聊天时间和消息
+- **待优化**：增加 WebSocket 自动重连机制
 
 ---
 
-## 六、数据库设计
+## 五、数据流转详解
 
-### 设计原则
+### 5.1 会话文件格式
 
-- **不存储原始数据**：仅保留聚合后的 runs 表，避免数据膨胀
-- **定期清理**：通过 cron 任务定期清理过期数据
+```jsonl
+{"type":"session","version":3,"id":"uuid","timestamp":"..."}
+{"type":"message","id":"...","timestamp":"...","message":{"role":"user","content":[...]}}
+{"type":"message","id":"...","timestamp":"...","message":{"role":"assistant","content":[...]}}
+{"type":"thinking_level_change","id":"...","timestamp":"...","thinkingLevel":"low"}
+```
 
-### 核心表
+### 5.2 数据库表结构
 
 ```sql
--- Run 聚合数据（唯一数据源）
-CREATE TABLE runs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  run_id TEXT UNIQUE NOT NULL,
-  session_id TEXT NOT NULL,
-  session_key TEXT NOT NULL,
-  provider TEXT NOT NULL,
-  model_id TEXT NOT NULL,
-  workspace_dir TEXT,
-  started_at INTEGER NOT NULL,
-  completed_at INTEGER,
-  status TEXT NOT NULL,
-  input_messages TEXT,
-  output_messages TEXT,
-  message_count INTEGER DEFAULT 0,
-  stages TEXT,
-  error TEXT,
+-- 聊天表
+CREATE TABLE chats (
+  chat_id TEXT UNIQUE NOT NULL,        -- direct:sessionId
+  channel_id TEXT NOT NULL,             -- qqbot / feishu
+  account_id TEXT NOT NULL,             -- mime / wife
+  session_key TEXT,                     -- OpenClaw session key
+  title TEXT NOT NULL,                  -- 03-22 21:05 (b16ed9f4)
+  last_message_at INTEGER,              -- 最后消息时间戳
+  message_count INTEGER DEFAULT 0,      -- 消息数量
+  session_file TEXT,                    -- 会话文件路径
+  is_hidden INTEGER DEFAULT 0,          -- 是否隐藏（备份文件）
   created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
-  INDEX idx_session_id (session_id),
-  INDEX idx_started_at (started_at)
-);
-
--- WebSocket 消息（用于重连恢复）
-CREATE TABLE ws_messages (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  seq INTEGER UNIQUE NOT NULL,
-  type TEXT NOT NULL,
-  data TEXT NOT NULL,
-  created_at INTEGER NOT NULL,
-  acked_at INTEGER,
-  INDEX idx_seq (seq)
-);
-
--- 文件位置记录（增量解析）
-CREATE TABLE file_positions (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  file_path TEXT UNIQUE NOT NULL,
-  position INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
+);
+
+-- 渠道表
+CREATE TABLE channels (
+  channel_id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  type TEXT,
+  status TEXT,
+  accounts TEXT                         -- JSON 数组
+);
+
+-- 运行记录表
+CREATE TABLE runs (
+  id TEXT PRIMARY KEY,
+  status TEXT,
+  model TEXT,
+  provider TEXT,
+  started_at INTEGER,
+  completed_at INTEGER
 );
 ```
 
 ---
 
-## 七、数据清理策略
+## 六、测试策略
 
-### 7.1 Cache Trace 文件清理
+### 6.1 端到端测试（e2e-full-test.sh）
 
-**脚本**：`/etc/cron.daily/openclaw-cache-trace-cleanup`
+**测试场景**：
+1. 创建新会话 → 聊天列表新增条目
+2. 点击第 1-5 个聊天 → 消息加载正常
+3. 验证无重复会话（备份不应显示）
+4. 检查备份文件不显示
 
-| 配置项 | 值 |
-|--------|---|
-| 保留时间 | 12 小时 |
-| 轮转阈值 | 500 MB |
+### 6.2 四层验证
 
-### 7.2 数据库清理
+```
+UI = API = 数据库 = 文件
+```
 
-**脚本**：`/etc/cron.daily/openclaw-monitor-db-cleanup`
-
-| 表 | 清理策略 |
-|---|---------|
-| runs | 保留 30 天 |
-| ws_messages | 保留最近 1000 条已确认消息 |
-| VACUUM | 每次清理后执行 |
-
----
-
-## 八、容错设计
-
-| 场景 | 处理方式 |
-|------|----------|
-| 文件监听失败 | 重试 3 次，降级为定时轮询（5秒） |
-| 解析失败 | 记录错误日志，跳过错误行继续解析 |
-| WebSocket 断开 | 客户端自动重连，重发未确认消息 |
-| SQLite 写入失败 | 内存缓存，定时重试 |
+- **UI**：前端聊天列表显示正确
+- **API**：返回的数据与数据库一致
+- **数据库**：记录完整且准确
+- **文件**：会话文件存在且可读
 
 ---
 
-## 九、性能优化
+## 七、已知问题与优化方向
 
-| 优化点 | 方案 |
-|--------|------|
-| 文件解析 | 增量解析，只解析新增部分 |
-| 数据库查询 | 索引优化（run_id, session_id, started_at） |
-| 数据存储 | 仅存储聚合数据，不存储原始 cache_traces |
-| WebSocket 推送 | 批量推送，节流控制 |
+### 7.1 已解决
 
----
+- ✅ 备份会话重复显示
+- ✅ 新会话不显示（file_added 事件处理）
+- ✅ 消息统计不准确（排除 toolResult）
+- ✅ 分页逻辑错误
 
-## 十、安全设计
+### 7.2 待优化
 
-| 安全点 | 方案 |
-|--------|------|
-| 文件路径验证 | 禁止路径穿越（`..`） |
-| SQL 注入防护 | 参数化查询 |
-| WebSocket 安全 | 仅本地连接 / Token 认证 |
-| API 安全 | 速率限制、CORS 配置 |
+- ⚠️ WebSocket 自动重连机制
+- ⚠️ 大文件性能优化（流式读取）
+- ⚠️ 前端缓存策略
+- ⚠️ 数据库清理策略
 
 ---
 
-## 十一、技术栈
+## 八、监控与运维
 
-| 组件 | 技术 |
-|------|------|
-| 后端框架 | Hono |
-| 前端框架 | Vue 3 + TypeScript |
-| 数据库 | SQLite (better-sqlite3) |
-| 文件监听 | chokidar |
-| WebSocket | 原生 WebSocket |
-| 构建工具 | Vite |
+### 8.1 服务状态检查
+
+```bash
+# 检查后端服务
+systemctl status openclaw-monitor
+
+# 检查数据库
+sqlite3 /var/lib/openclaw-monitor/monitor.db "SELECT COUNT(*) FROM chats"
+
+# 检查文件监视器
+journalctl -u openclaw-monitor -n 50 | grep MessageWatcher
+
+# 检查 WebSocket 连接
+journalctl -u openclaw-monitor -n 50 | grep "Connection"
+```
+
+### 8.2 性能指标
+
+- **内存使用**：< 1GB（正常）
+- **数据库大小**：< 2GB（可接受）
+- **文件监视延迟**：< 2秒（实时）
+- **API 响应时间**：< 100ms（快速）
 
 ---
 
-*最后更新：2026-03-18*
+## 九、总结
+
+OpenClaw Monitor 通过文件监视器实时监听 OpenClaw Agent 的会话文件变化，解析并存储到 SQLite 数据库，通过 REST API 和 WebSocket 提供数据和实时推送，最终在 Vue 3 前端展示。
+
+**核心价值**：让 OpenClaw 的运行状态"可见、可查、可分析"！
