@@ -125,6 +125,12 @@ async function refresh() {
     const data = await fetchChats();
     const newChats = data.chats || [];
     
+    // ✅ 防止 API 错误或空数组导致清空列表
+    if (newChats.length === 0) {
+      console.warn('[ChatList] API returned empty array, skipping refresh');
+      return;
+    }
+    
     // 创建 ID 到新聊天数据的映射
     const newChatsMap = new Map(newChats.map((chat: Chat) => [chat.id, chat]));
     

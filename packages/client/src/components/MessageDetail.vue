@@ -158,10 +158,8 @@ async function loadMessages() {
     offset.value = limit;
     hasMore.value = messages.value.length < total.value;
     
-    // ✅ 只在初始加载时滚动到底部
-    if (messages.value.length > 0 && offset.value === limit) {
-      scrollToBottom();
-    }
+    // ✅ 完全禁用自动滚动，让用户手动控制
+    // console.log('[MessageDetail] Messages loaded, auto-scroll disabled');
   } catch (error) {
     console.error('Failed to load messages:', error);
   } finally {
@@ -211,9 +209,19 @@ function appendMessage(msg: Message) {
   const scrollHeightBefore = list ? list.scrollHeight : 0;
   const scrollTopBefore = list ? list.scrollTop : 0;
   const clientHeightBefore = list ? list.clientHeight : 0;
+  const distanceBefore = scrollHeightBefore - scrollTopBefore - clientHeightBefore;
   
   // 判断添加消息前是否在底部（距离底部 < 10px）
-  const wasAtBottom = list ? (scrollHeightBefore - scrollTopBefore - clientHeightBefore) < 10 : false;
+  const wasAtBottom = distanceBefore < 10;
+  
+  console.log('[MessageDetail] Append message check:', {
+    scrollTopBefore,
+    scrollHeightBefore,
+    clientHeightBefore,
+    distanceBefore,
+    wasAtBottom,
+    msgId: msg.id?.substring(0, 20)
+  });
   
   // ✅ 添加消息
   messages.value.push(msg);
@@ -229,11 +237,22 @@ function appendMessage(msg: Message) {
 }
 
 function refresh() {
+  // ✅ 保存当前滚动位置
+  const list = messageListRef.value;
+  const wasAtBottom = list ? (list.scrollHeight - list.scrollTop - list.clientHeight) < 10 : true;
+  
   offset.value = 0;
   hasMore.value = true;
   messages.value = [];
   total.value = 0;
   loadMessages();
+  
+  // ✅ 如果之前在底部，刷新后保持在底部
+  if (wasAtBottom) {
+    nextTick(() => {
+      scrollToBottom();
+    });
+  }
 }
 
 /**
