@@ -99,6 +99,15 @@ function handleWebSocketMessage(data: any) {
     const sessionFile = data.data.file;
     const message = data.data.message;
     
+    // ✅ 处理 file_added 事件（新会话文件创建）
+    if (data.data.type === 'file_added') {
+      console.log('[WS] File added, refreshing chat list:', sessionFile);
+      if (chatListRef.value) {
+        chatListRef.value.refresh();
+      }
+      return;
+    }
+    
     // ✅ 提取消息实际时间戳
     let messageTime = Date.now();
     if (message) {
