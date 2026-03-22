@@ -206,16 +206,25 @@ async function loadMore() {
 }
 
 function appendMessage(msg: Message) {
-  // ✅ 检测滚动条是否在底部（更严格的判断）
-  const isAtBottom = isScrolledToBottom();
-  console.log('[MessageDetail] Append message, isAtBottom:', isAtBottom);
+  // ✅ 保存当前滚动位置信息（在添加消息前）
+  const list = messageListRef.value;
+  const scrollHeightBefore = list ? list.scrollHeight : 0;
+  const scrollTopBefore = list ? list.scrollTop : 0;
+  const clientHeightBefore = list ? list.clientHeight : 0;
   
+  // 判断添加消息前是否在底部（距离底部 < 10px）
+  const wasAtBottom = list ? (scrollHeightBefore - scrollTopBefore - clientHeightBefore) < 10 : false;
+  
+  // ✅ 添加消息
   messages.value.push(msg);
   total.value++;
   
-  // ✅ 只有滚动条明确在底部时，才自动滚动
-  if (isAtBottom) {
+  // ✅ 只有在添加消息前就在底部，才自动滚动
+  if (wasAtBottom) {
+    console.log('[MessageDetail] Was at bottom, scrolling to bottom');
     scrollToBottom();
+  } else {
+    console.log('[MessageDetail] Was not at bottom, keeping position');
   }
 }
 
