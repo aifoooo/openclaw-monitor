@@ -95,7 +95,7 @@ function onChatSelected(chat: any) {
 }
 
 function handleWebSocketMessage(data: any) {
-  console.log('[WS] Received message:', data.type, data.data?.type || 'no data type');
+  console.log('[WS] Received message:', data.type, data.data?.type || 'no data type', 'sessionFile:', data.data?.file || 'no file');
   
   if (data.type === 'new_message' && data.data) {
     const sessionFile = data.data.file;
@@ -128,13 +128,22 @@ function handleWebSocketMessage(data: any) {
     
     // ✅ 追加消息到详情页（只在用户处于底部时）
     if (selectedChat.value && messageDetailRef.value && sessionFile) {
+      console.log('[WS] Checking if should append message:', {
+        selectedSessionFile: selectedChat.value.sessionFile,
+        incomingSessionFile: sessionFile,
+        messageExists: !!message,
+        messageDetailRefExists: !!messageDetailRef.value
+      });
+      
       if (selectedChat.value.sessionFile === sessionFile && message) {
         // 检查用户是否在底部
         const isAtBottom = messageDetailRef.value.isScrolledToBottom?.() ?? true;
+        console.log('[WS] isScrolledToBottom result:', isAtBottom);
         
         if (isAtBottom) {
           // 用户在底部，正常追加消息
           const msg = message.message || message;
+          console.log('[WS] User at bottom, appending message:', msg.role, msg.content?.substring(0, 50));
           messageDetailRef.value.appendMessage({
             id: message.id || `msg-${Date.now()}`,
             role: msg.role || 'user',
@@ -148,15 +157,26 @@ function handleWebSocketMessage(data: any) {
           // ✅ 可选：可以在这里显示一个提示，告诉用户有新消息
           // 但目前先保持安静
         }
+      } else {
+        console.log('[WS] Not appending message:', {
+          sessionFileMatch: selectedChat.value.sessionFile === sessionFile,
+          selectedSessionFile: selectedChat.value.sessionFile,
+          incomingSessionFile: sessionFile,
+          hasMessage: !!message
+        });
       }
     }
   }
 }
 
 function connectWebSocket() {
+  console.log('[WS] Creating WebSocket connection...');
   ws = createWebSocket(handleWebSocketMessage);
+  console.log('[WS] WebSocket created:', ws ? 'yes' : 'no', 'readyState:', ws?.readyState);
   if (ws) {
     ws.onopen = () => {
+      console.log('[WS] WebSocket connected successfully');
+      connected.value = true;
       connected.value = true;
       
       // ✅ 浏览器会自动响应 ping，不需要手动处理
@@ -178,6 +198,7 @@ function connectWebSocket() {
     };
     
     ws.onclose = () => { 
+      console.log('[WS] WebSocket closed');
       connected.value = false;
       // 清除心跳
       if ((ws as any)._heartbeat) {
@@ -185,11 +206,15 @@ function connectWebSocket() {
       }
       setTimeout(() => { if (!ws || ws.readyState === WebSocket.CLOSED) connectWebSocket(); }, 5000);
     };
-    ws.onerror = (error) => { console.error('[WS] Error:', error); };
+    ws.onerror = (error) => { 
+      console.error('[WS] WebSocket error:', error); 
+      console.error('[WS] Error details:', JSON.stringify(error));
+    };
   }
 }
 
 onMounted(() => {
+  console.log('[Home] Component mounted, initializing...');
   loadAccounts();
   connectWebSocket();
   

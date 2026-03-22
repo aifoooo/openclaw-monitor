@@ -14,6 +14,11 @@ export default defineConfig({
         target: REMOTE_BACKEND,
         changeOrigin: true,
       },
+      '/ws': {
+        target: REMOTE_BACKEND,
+        changeOrigin: true,
+        ws: true,
+      },
     },
     // ✅ 禁用 .env 文件监听，避免自动重启
     watch: {
