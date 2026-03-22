@@ -1,13 +1,24 @@
 import fs from 'fs';
+import path from 'path';
 import chokidar from 'chokidar';
 import type { CacheTraceEntry, Run, DBCacheTrace } from '../types';
 import { convertToRun, parseRecentEntries, parseCacheTraceIncremental } from '../parser';
+import { parseSessionFile, AGENT_TO_CHANNEL_MAP } from '../chat';
 import * as db from '../db';
 
 // ==================== ✅ 消息文件监听 ====================
 
 let messageWatcher: chokidar.FSWatcher | null = null;
 let onNewMessage: ((message: any) => void) | null = null;
+
+/**
+ * 从文件路径提取 agent 名字
+ * /root/.openclaw/agents/mime-qq/sessions/xxx.jsonl → mime-qq
+ */
+function extractAgentFromPath(filePath: string): string | null {
+  const match = filePath.match(/\/agents\/([^/]+)\/sessions\//);
+  return match ? match[1] : null;
+}
 
 /**
  * 启动消息文件监听
@@ -40,11 +51,19 @@ export function startMessageWatcher(
     },
   });
   
-  messageWatcher.on('add', (filePath: string) => {
+  messageWatcher.on('add', async (filePath: string) => {
     console.log(`[MessageWatcher] New file: ${filePath}`);
-    // 新文件，通知前端刷新
+    
+    // ✅ 不再自己解析，等待 sessions.json 更新
+    // 定时同步任务会处理新会话（每分钟）
+    // 这里只通知前端刷新，前端会调用 /api/chats 获取最新数据
+    
+    // 等待 500ms 让 sessions.json 更新
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    // 通知前端刷新
     if (onNewMessage) {
-      onNewMessage({ type: 'file_added', path: filePath });
+      onNewMessage({ type: 'file_added', file: filePath });
     }
   });
   
@@ -57,6 +76,39 @@ export function startMessageWatcher(
       
       if (lastLine) {
         const msg = JSON.parse(lastLine);
+        
+        // ✅ 更新数据库中的 message_count 和 last_message_at
+        // 只处理当前会话文件（不是 .jsonl.reset.* 文件）
+        // 只统计有效消息（type=message 且 role!=toolResult）
+        if (!filePath.includes('.jsonl.reset.')) {
+          const db = require('../db/extended');
+          const chatId = db.findChatIdBySessionFile(filePath);
+          
+          if (chatId) {
+            // 检查是否是有效消息（排除 toolResult）
+            const msgType = msg.type;
+            const msgRole = msg.message?.role || msg.role;
+            const isValidMessage = msgType === 'message' && msgRole !== 'toolResult';
+            
+            if (isValidMessage) {
+              // 提取时间戳
+              let timestamp = Date.now();
+              if (msg.timestamp) {
+                timestamp = typeof msg.timestamp === 'number' 
+                  ? msg.timestamp 
+                  : new Date(msg.timestamp).getTime();
+              } else if (msg.message?.timestamp) {
+                timestamp = typeof msg.message.timestamp === 'number'
+                  ? msg.message.timestamp
+                  : new Date(msg.message.timestamp).getTime();
+              }
+              
+              db.incrementChatMessageCount(chatId, timestamp);
+              console.log(`[MessageWatcher] Updated chat stats: ${chatId}`);
+            }
+          }
+        }
+        
         if (onNewMessage) {
           onNewMessage({
             type: 'new_message',

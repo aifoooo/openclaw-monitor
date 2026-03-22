@@ -350,6 +350,9 @@ export function createExtendedRoutes(config: MonitorConfig): Hono {
     const limit = parseInt(limitParam || '10');
     const offset = parseInt(offsetParam || '0');
     
+    // ✅ 添加 API 请求日志
+    console.log(`[API] GET /api/chats/${chatId}/messages?limit=${limit}&offset=${offset} - ${new Date().toISOString()}`);
+    
     try {
       const ch = dbExt.getChat(chatId);
       

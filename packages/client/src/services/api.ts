@@ -90,8 +90,14 @@ export async function fetchAccounts() {
 
 export async function fetchChats(channelId?: string, limit = 50, offset = 0) {
   const response = await api.get('/api/chats', {
-    params: { channelId, limit, offset }
+    params: { channelId, limit, offset },
   });
+  return response.data;
+}
+
+// 同步 chats（扫描新会话并清理已删除的）
+export async function syncChats() {
+  const response = await api.post('/api/chats/sync');
   return response.data;
 }
 
@@ -140,9 +146,8 @@ export function createWebSocket(onMessage?: (data: any) => void): WebSocket | nu
     const protocol = API_BASE.startsWith('https') ? 'wss:' : 'ws:';
     const host = API_BASE.replace(/^https?:\/\//, '');
     wsUrl = `${protocol}//${host}/ws`;
-  } else if (typeof window !== 'undefined' && window.location.port === '5173') {
-    wsUrl = 'ws://localhost:3000/ws';
   } else {
+    // ✅ 生产环境：使用当前页面的 host，通过 nginx 代理连接 WebSocket
     const protocol = typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = typeof window !== 'undefined' ? window.location.host : 'localhost:3000';
     wsUrl = `${protocol}//${host}/ws`;

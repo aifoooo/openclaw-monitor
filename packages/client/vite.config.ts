@@ -15,5 +15,9 @@ export default defineConfig({
         changeOrigin: true,
       },
     },
+    // ✅ 禁用 .env 文件监听，避免自动重启
+    watch: {
+      ignored: ['**/.env*'],
+    },
   },
 });

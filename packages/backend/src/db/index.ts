@@ -492,3 +492,16 @@ export function getStats(): {
     dbSizeMB,
   };
 }
+
+// ✅ 重新导出 extended.ts 中的函数
+export {
+  saveChat,
+  getChats,
+  getChat,
+  getChatBySessionKey,
+  hideChat,
+  unhideChat,
+  getHiddenChats,
+  getHiddenCount,
+  syncChatTimes,
+} from './extended';

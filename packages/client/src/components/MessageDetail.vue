@@ -264,9 +264,10 @@ watch(() => props.chatId, () => {
   hasMore.value = true;
   messages.value = [];
   loadMessages();
-});
+});  // ✅ 移除 immediate: true，避免首次加载时重复触发
 
 onMounted(() => {
+  // ✅ 只在组件首次挂载时加载一次
   loadMessages();
   
   // 添加滚动监听

@@ -74,6 +74,36 @@ test_accounts_config() {
     fi
 }
 
+# TC-02.5: Title 格式验证（增强版）
+test_title_format() {
+    print_header "TC-02.5: Title 格式验证（增强版）"
+    
+    title_errors=0
+    
+    # 获取所有会话的 title 和 chat_id
+    while IFS='|' read -r chat_id title; do
+        # 提取正确的 shortId（从 chat_id 中提取）
+        # chat_id 格式：direct:sessionId 或 direct:sessionId_resetTime
+        session_id=$(echo "$chat_id" | sed 's/^direct://' | cut -d'_' -f1)
+        expected_short_id=$(echo "$session_id" | cut -c1-8)
+        
+        # 检查 title 中是否包含正确的 shortId
+        if echo "$title" | grep -q "($expected_short_id)"; then
+            echo -e "${GREEN}[PASS]${NC} $chat_id: title 正确 ($title)"
+        else
+            # ✅ 任何不匹配都报 FAIL（不管是 Open ID、QQ 号还是其他）
+            echo -e "${RED}[FAIL]${NC} $chat_id: title 格式错误 ($title, 期望: $expected_short_id)"
+            title_errors=$((title_errors + 1))
+        fi
+    done < <(sqlite3 "$DB_PATH" "SELECT chat_id, title FROM chats WHERE is_hidden = 0")
+    
+    if [ $title_errors -eq 0 ]; then
+        print_result 0 "所有会话 title 格式正确"
+    else
+        print_result 1 "发现 $title_errors 个 title 格式错误"
+    fi
+}
+
 # TC-03: Session 文件数量验证
 test_session_count() {
     print_header "TC-03: Session 文件数量验证"
@@ -446,6 +476,7 @@ main() {
     # 执行测试
     test_channels_config
     test_accounts_config
+    test_title_format
     test_session_count
     test_session_integrity
     test_database_integrity

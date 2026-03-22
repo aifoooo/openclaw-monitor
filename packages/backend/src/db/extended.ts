@@ -215,14 +215,64 @@ export function saveChat(chat: Chat): void {
 }
 
 /**
+ * 更新会话的消息数和最后消息时间
+ */
+export function updateChatStats(chatId: string, messageCount: number, lastMessageAt: number): void {
+  if (!db) throw new Error('Database not initialized');
+  
+  const stmt = db.prepare(`
+    UPDATE chats 
+    SET message_count = ?, last_message_at = ?, updated_at = ?
+    WHERE chat_id = ?
+  `);
+  
+  stmt.run(messageCount, lastMessageAt, Date.now(), chatId);
+}
+
+/**
+ * 根据会话文件路径查找 chat_id
+ */
+export function findChatIdBySessionFile(sessionFile: string): string | null {
+  if (!db) return null;
+  
+  const stmt = db.prepare(`SELECT chat_id FROM chats WHERE session_file = ?`);
+  const row = stmt.get(sessionFile) as { chat_id: string } | undefined;
+  return row?.chat_id || null;
+}
+
+/**
+ * 增加会话的消息数
+ */
+export function incrementChatMessageCount(chatId: string, lastMessageAt: number): void {
+  if (!db) throw new Error('Database not initialized');
+  
+  const stmt = db.prepare(`
+    UPDATE chats 
+    SET message_count = message_count + 1, last_message_at = ?, updated_at = ?
+    WHERE chat_id = ?
+  `);
+  
+  stmt.run(lastMessageAt, Date.now(), chatId);
+}
+
+/**
  * 生成聊天标题
  */
-function generateTitle(sessionKey: string, timestamp?: number): string {
-  const parts = sessionKey.split(':');
-  
-  // 提取 session ID 的最后部分
-  const lastPart = parts[parts.length - 1];
-  const shortId = lastPart.substring(0, 8);
+/**
+ * 从 chat_id 中提取 sessionId
+ * chat_id 格式：direct:sessionId 或 direct:sessionId_resetTime
+ */
+function extractSessionIdFromChatId(chatId: string): string {
+  // 去掉 "direct:" 前缀
+  const idPart = chatId.startsWith('direct:') ? chatId.substring(7) : chatId;
+  // 去掉 reset 时间后缀
+  return idPart.split('_reset_')[0];
+}
+
+function generateTitle(chatId: string, timestamp?: number): string {
+  // ✅ 从 chat_id 中提取 sessionId，而不是从 sessionKey
+  const sessionId = extractSessionIdFromChatId(chatId);
+  const shortId = sessionId.substring(0, 8);
   
   // 如果有时间，显示时间 + ID
   if (timestamp) {
@@ -234,9 +284,7 @@ function generateTitle(sessionKey: string, timestamp?: number): string {
     return `${month}-${day} ${hour}:${minute} (${shortId})`;
   }
   
-  // 如果没有时间，显示渠道 + ID
-  const channelId = parts[1] || parts[0];
-  return `${channelId} (${shortId})`;
+  return shortId;
 }
 
 /**
@@ -283,9 +331,9 @@ export function syncChatTimes(sessionFiles: { chatId: string; sessionFile: strin
         }
       }
       
-      if (lastMessageTime > 0 && sessionKey) {
-        // 生成新标题（使用 sessionKey 和新时间）
-        const newTitle = generateTitle(sessionKey, lastMessageTime);
+      if (lastMessageTime > 0) {
+        // ✅ 使用 chatId 生成标题（而不是 sessionKey）
+        const newTitle = generateTitle(chatId, lastMessageTime);
         
         // 更新数据库（同时更新时间和标题）
         const stmt = db!.prepare('UPDATE chats SET last_message_at = ?, title = ? WHERE chat_id = ?');
@@ -735,7 +783,7 @@ export function cleanOrphanedChats(openclawDir: string): number {
       if (!fs.existsSync(sessionDir)) continue;
       
       const files = fs.readdirSync(sessionDir)
-        .filter(f => f.endsWith('.jsonl'));
+        .filter(f => f.endsWith('.jsonl') || f.includes('.jsonl.reset.'));
       
       for (const file of files) {
         existingFiles.add(path.join(sessionDir, file));

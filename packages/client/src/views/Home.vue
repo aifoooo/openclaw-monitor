@@ -27,6 +27,7 @@
       <section class="content-area">
         <MessageDetail 
           v-if="selectedChat" 
+          :key="selectedChat.id"
           ref="messageDetailRef"
           :chat-id="selectedChat.id" 
           :session-file="selectedChat.sessionFile" 

@@ -2,6 +2,18 @@
  * 聊天管理模块
  * 
  * 从 Session 文件解析聊天信息
+ * 
+ * ⚠️ 重要：渠道信息必须从配置文件读取，不能随意推断！
+ * 
+ * 渠道配置来源：
+ * 1. OpenClaw 配置文件：~/.openclaw/openclaw.json 的 channels 字段
+ * 2. sessions.json：记录当前会话的 sessionKey
+ * 
+ * sessionKey 格式：agent:{agentName}:{channelId}:{chatType}:{sessionId}
+ * - agentName：agent 名称，如 mime-qq, mime-feishu, wife-qq
+ * - channelId：渠道 ID，如 qqbot, feishu
+ * - chatType：聊天类型，如 direct, group
+ * - sessionId：会话 ID
  */
 
 import * as fs from 'fs';
@@ -10,13 +22,40 @@ import * as readline from 'readline';
 import type { Chat, Message } from '../types';
 
 /**
+ * ⚠️ 重要：Agent 到渠道的映射
+ * 
+ * 这个映射基于 OpenClaw 配置文件的 channels 字段。
+ * 当无法从 sessionKey 获取渠道时，使用此映射作为 fallback。
+ * 
+ * 配置文件示例：
+ * ```json
+ * {
+ *   "channels": {
+ *     "qqbot": { "accounts": { "mime": {...}, "wife": {...} } },
+ *     "feishu": { ... }
+ *   }
+ * }
+ * ```
+ * 
+ * agentName 格式通常是 {accountName}-{channelId} 或 {channelId}
+ * 例如：mime-qq → qqbot, wife-qq → qqbot, mime-feishu → feishu
+ */
+export const AGENT_TO_CHANNEL_MAP: Record<string, string> = {
+  // QQ Bot 渠道
+  'mime-qq': 'qqbot',
+  'wife-qq': 'qqbot',
+  'main': 'qqbot',  // 默认 agent
+  
+  // 飞书渠道
+  'mime-feishu': 'feishu',
+  
+  // 其他 agent（按需添加）
+};
+
+/**
  * 从 sessionKey 中提取正确的 channelId 和 accountId
  * 
- * sessionKey 格式：
- * - agent:mime-qqbot:qqbot:direct:xxx → channelId=qqbot, accountId=mime-qqbot
- * - agent:main:main:direct:xxx → channelId=main, accountId=main
- * - agent:wife-qq:wife-qq:direct:xxx → channelId=local, accountId=wife-qq
- * - qqbot:c2c:xxx → channelId=qqbot, accountId=unknown
+ * ⚠️ 重要：优先从 sessionKey 提取，fallback 时使用配置文件映射
  */
 function extractChannelAndAccountFromSessionKey(
   sessionKey: string,
@@ -28,6 +67,8 @@ function extractChannelAndAccountFromSessionKey(
   if (parts[0] === 'agent' && parts.length >= 3) {
     const agentName = parts[1];
     const channelId = parts[2];
+    
+    // ✅ 从 sessionKey 中成功提取，直接返回
     return {
       channelId,
       accountId: agentName,
@@ -44,13 +85,27 @@ function extractChannelAndAccountFromSessionKey(
     };
   }
   
-  // 从文件路径推断
+  // ⚠️ Fallback：从文件路径推断 agentName，然后使用映射表确定渠道
   // /root/.openclaw/agents/mime-qq/sessions/xxx.jsonl → accountId=mime-qq
   const match = filePath.match(/\/agents\/([^\/]+)\/sessions\//);
   if (match) {
+    const agentName = match[1];
+    
+    // ✅ 使用配置文件映射表确定渠道
+    const channelId = AGENT_TO_CHANNEL_MAP[agentName];
+    
+    if (channelId) {
+      return {
+        channelId,
+        accountId: agentName,
+      };
+    }
+    
+    // ⚠️ 如果映射表中没有，打印警告并返回 unknown
+    console.warn(`[Chat] Unknown agent: ${agentName}, please add to AGENT_TO_CHANNEL_MAP`);
     return {
-      channelId: 'local',
-      accountId: match[1],
+      channelId: 'unknown',
+      accountId: agentName,
     };
   }
   
@@ -71,69 +126,44 @@ export async function parseSessionFile(
   if (!fs.existsSync(filePath)) {
     return null;
   }
-  
+
   try {
     const messages: Message[] = [];
     let lastMessageAt = 0;
-    let firstMessageAt = 0;  // 新增：第一条消息时间
-    let sessionKey = '';
-    let title = '';
+    let firstMessageAt = 0;
     let sessionId = '';
-    
+
     const fileStream = fs.createReadStream(filePath, { encoding: 'utf-8' });
     const rl = readline.createInterface({
       input: fileStream,
       crlfDelay: Infinity
     });
-    
+
     for await (const line of rl) {
       if (!line.trim()) continue;
-      
+
       try {
         const msg = JSON.parse(line);
-        
-        // 提取 sessionKey（从第一条消息）
-        if (!sessionKey && msg.sessionKey) {
-          sessionKey = msg.sessionKey;
-          title = extractTitle(msg.sessionKey);
-        }
-        
-        // ✅ 飞书格式：从 session 类型的消息中提取 sessionId
+
+        // 从 session 类型的消息中提取 sessionId
         if (!sessionId && msg.type === 'session' && msg.id) {
           sessionId = msg.id;
         }
-        
-        // ✅ 飞书格式：从 message 类型的消息中提取 sessionKey
-        if (!sessionKey && msg.type === 'message' && msg.message?.content) {
-          const content = msg.message.content;
-          if (Array.isArray(content)) {
-            for (const item of content) {
-              if (item.type === 'text' && item.text) {
-                // 从文本中提取 sessionKey（格式：agent:mime-feishu:feishu:direct:xxx）
-                const match = item.text.match(/sessionKey[：:\s]*([a-zA-Z0-9:_-]+)/);
-                if (match) {
-                  sessionKey = match[1];
-                  title = extractTitle(sessionKey);
-                }
-              }
-            }
-          }
-        }
-        
+
         // 提取时间戳
         const timestamp = msg.timestamp ? new Date(msg.timestamp).getTime() : Date.now();
-        
-        // 新增：记录第一条消息的时间
+
+        // 记录第一条消息的时间
         if (firstMessageAt === 0) {
           firstMessageAt = timestamp;
         }
-        
+
         if (timestamp > lastMessageAt) {
           lastMessageAt = timestamp;
         }
-        
-        // 提取消息（支持多种格式）
-        if (msg.type === 'message' && msg.message) {
+
+        // 提取消息（排除 toolResult 类型）
+        if (msg.type === 'message' && msg.message && msg.message.role !== 'toolResult') {
           // 飞书格式：{type: "message", message: {role, content}}
           messages.push({
             id: msg.id || `${timestamp}-${messages.length}`,
@@ -142,7 +172,7 @@ export async function parseSessionFile(
             content: msg.message.content || [],
             timestamp,
           });
-        } else if (msg.role) {
+        } else if (msg.role && msg.role !== 'toolResult') {
           // 标准格式：{role, content}
           messages.push({
             id: msg.id || `${timestamp}-${messages.length}`,
@@ -156,50 +186,19 @@ export async function parseSessionFile(
         // 忽略解析错误
       }
     }
-    
-    // ✅ 如果没有 sessionKey，从文件名推断
-    if (!sessionKey && sessionId) {
-      sessionKey = `agent:${accountId}:${channelId}:direct:${sessionId}`;
-      title = extractTitle(sessionKey, firstMessageAt);
-    }
-    
-    // ✅ 如果还是没有 sessionKey，从文件名生成一个
-    if (!sessionKey) {
-      const fileName = path.basename(filePath, '.jsonl');
-      sessionKey = `agent:${accountId}:${channelId}:direct:${fileName}`;
-      title = extractTitle(sessionKey, firstMessageAt);
-      console.log(`[Chat] Generated sessionKey from filename: ${sessionKey}`);
-    }
-    
-    if (sessionKey === 'params' && sessionId) {
-      sessionKey = `agent:${accountId}:${channelId}:direct:${sessionId}`;
-      title = extractTitle(sessionKey, firstMessageAt);
-    }
-    
-    // ✅ 改进：使用第一条消息时间生成 title
-    if (sessionKey && firstMessageAt > 0) {
-      title = extractTitle(sessionKey, firstMessageAt);
-    }
-    
-    if (!sessionKey) {
-      console.log(`[Chat] No sessionKey found in ${filePath}`);
-      return null;
-    }
-    
-    // ✅ 新增：从 sessionKey 中提取正确的 channelId 和 accountId
-    const extractedInfo = extractChannelAndAccountFromSessionKey(sessionKey, filePath);
-    const finalChannelId = extractedInfo.channelId || channelId;
-    const finalAccountId = extractedInfo.accountId || accountId;
-    
+
+    // 使用 sessionId 生成 title
+    const title = sessionId ? extractTitle(sessionId, firstMessageAt) : 'Unknown';
+
     return {
-      id: extractChatId(sessionKey),
-      channelId: finalChannelId,
-      accountId: finalAccountId,
-      sessionKey,
+      id: sessionId ? `direct:${sessionId}` : '',
+      channelId,
+      accountId,
+      sessionKey: '', // 由 scanAgentSessions 设置
       title,
       lastMessageAt,
       messageCount: messages.length,
-      runCount: 0, // 将从 runs 表计算
+      runCount: 0,
       sessionFile: filePath,
     };
   } catch (e) {
@@ -244,15 +243,16 @@ function extractChatId(sessionKey: string): string {
 }
 
 /**
- * 从 sessionKey 提取标题
+ * 从 sessionId 提取标题（强制使用 sessionId，解决飞书 Open ID 问题）
  * 格式：时间 + 短ID（例如：03-15 04:00 (7add3c20)）
+ * 
+ * @param sessionId - 真实的 sessionId（必须）
+ * @param createdAt - 创建时间
  */
-function extractTitle(sessionKey: string, createdAt?: number): string {
-  const parts = sessionKey.split(':');
-  
-  // 提取 session ID 的最后部分
-  const lastPart = parts[parts.length - 1];
-  const shortId = lastPart.substring(0, 8);
+function extractTitle(sessionId: string, createdAt?: number): string {
+  // ✅ 无论如何都从 sessionId 中提取正确的 shortId（用户要求：无条件判断）
+  const idPart = sessionId.split('_reset_')[0];  // 移除重置时间后缀
+  const shortId = idPart.substring(0, 8);       // 取前8位作为短ID
   
   // 如果有创建时间，显示时间 + ID
   if (createdAt) {
@@ -264,9 +264,7 @@ function extractTitle(sessionKey: string, createdAt?: number): string {
     return `${month}-${day} ${hour}:${minute} (${shortId})`;
   }
   
-  // 如果没有时间，显示渠道 + ID
-  const channelId = parts[1] || parts[0];
-  return `${channelId} (${shortId})`;
+  return shortId;
 }
 
 /**
@@ -340,7 +338,201 @@ function countMessagesInFile(filePath: string): number {
 }
 
 /**
- * 扫描所有渠道的 Session
+ * 从备份文件名提取重置时间
+ * 格式：xxx.jsonl.reset.2026-03-21T11-31-30.009Z
+ */
+function extractResetTimeFromFilename(filename: string): number | null {
+  const match = filename.match(/\.reset\.(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})/);
+  if (match) {
+    const [, year, month, day, hour, minute, second] = match.map(Number);
+    try {
+      return new Date(year, month - 1, day, hour, minute, second).getTime();
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/**
+ * 扫描单个 agent 的 sessions 目录
+ * 包括当前会话和历史备份
+ */
+async function scanAgentSessions(
+  agentsDir: string,
+  agentName: string
+): Promise<Chat[]> {
+  const chats: Chat[] = [];
+  const sessionsDir = path.join(agentsDir, agentName, 'sessions');
+  
+  if (!fs.existsSync(sessionsDir)) {
+    return chats;
+  }
+  
+  // 读取 sessions.json 获取当前会话信息
+  const sessionsJsonPath = path.join(sessionsDir, 'sessions.json');
+  let currentSessions: Record<string, any> = {};
+  
+  if (fs.existsSync(sessionsJsonPath)) {
+    try {
+      currentSessions = JSON.parse(fs.readFileSync(sessionsJsonPath, 'utf-8'));
+    } catch (e) {
+      console.error(`[Chat] Error reading sessions.json for ${agentName}:`, e);
+    }
+  }
+  
+  // 扫描目录下所有文件
+  const files = fs.readdirSync(sessionsDir);
+  
+  // 按 sessionId 分组（一个 sessionId 可能有多份备份）
+  const sessionFiles = new Map<string, Array<{ file: string; isReset: boolean; resetTime: number | null }>>();
+  
+  for (const file of files) {
+    // 只处理 .jsonl 和 .jsonl.reset.* 文件
+    if (file.endsWith('.jsonl')) {
+      const filePath = path.join(sessionsDir, file);
+      const sessionId = file.replace('.jsonl', '');
+      if (!sessionFiles.has(sessionId)) {
+        sessionFiles.set(sessionId, []);
+      }
+      sessionFiles.get(sessionId)!.push({ file: filePath, isReset: false, resetTime: null });
+    } else if (file.includes('.jsonl.reset.')) {
+      // 提取原始 sessionId
+      const match = file.match(/^(.+)\.jsonl\.reset\./);
+      if (match) {
+        const sessionId = match[1];
+        const filePath = path.join(sessionsDir, file);
+        const resetTime = extractResetTimeFromFilename(file);
+        
+        if (!sessionFiles.has(sessionId)) {
+          sessionFiles.set(sessionId, []);
+        }
+        sessionFiles.get(sessionId)!.push({
+          file: filePath,
+          isReset: true,
+          resetTime
+        });
+      }
+    }
+  }
+  
+  // 为每个会话生成 Chat 条目
+  for (const [sessionId, files] of sessionFiles) {
+    // 从 sessions.json 查找对应的 sessionKey
+    let currentSessionKey = '';
+    let channelId = '';
+    let accountId = agentName;
+    
+    for (const [key, info] of Object.entries(currentSessions)) {
+      if (key.endsWith(sessionId) || (info as any).sessionId === sessionId) {
+        currentSessionKey = key;
+        const extracted = extractChannelAndAccountFromSessionKey(key, '');
+        channelId = extracted.channelId;
+        accountId = extracted.accountId;
+        break;
+      }
+    }
+    
+    // ⚠️ 重要：如果没找到 sessionKey，使用 AGENT_TO_CHANNEL_MAP 确定渠道
+    if (!currentSessionKey) {
+      channelId = AGENT_TO_CHANNEL_MAP[agentName] || 'unknown';
+      if (channelId === 'unknown') {
+        console.warn(`[Chat] Unknown agent: ${agentName}, please add to AGENT_TO_CHANNEL_MAP`);
+      }
+      currentSessionKey = `agent:${agentName}:${channelId}:direct:${sessionId}`;
+      console.log(`[Chat] No sessionKey found for ${sessionId}, generated: ${currentSessionKey}`);
+    }
+    
+    // 为每个文件生成 Chat
+    for (const fileInfo of files) {
+      if (!fs.existsSync(fileInfo.file)) continue;
+      
+      const isCurrent = !fileInfo.isReset;
+      console.log(`[Chat] Processing: ${path.basename(fileInfo.file)}, isCurrent=${isCurrent}`);
+      
+      try {
+        // 解析文件获取消息信息
+        let chat = await parseSessionFile(fileInfo.file, channelId, accountId);
+        
+        // ✅ 如果 parseSessionFile 返回 null，创建一个基本的 chat 对象
+        if (!chat) {
+          console.log(`[Chat] parseSessionFile returned null for ${fileInfo.file}, creating basic chat object`);
+          
+          // ✅ 即使返回 null，也要统计文件中的消息数
+          let messageCount = 0;
+          let lastMessageAt = Date.now();
+          
+          try {
+            const fileContent = fs.readFileSync(fileInfo.file, 'utf-8');
+            const lines = fileContent.trim().split('\n').filter(l => l.trim());
+            for (const line of lines) {
+              try {
+                const msg = JSON.parse(line);
+                // 统计有效消息（type === 'message' 且 role !== 'toolResult'）
+                if (msg.type === 'message' && msg.message && msg.message.role !== 'toolResult') {
+                  messageCount++;
+                  if (msg.message.timestamp) {
+                    lastMessageAt = msg.message.timestamp;
+                  }
+                }
+              } catch (e) {
+                // 忽略解析错误
+              }
+            }
+          } catch (e) {
+            console.error(`[Chat] Error counting messages in ${fileInfo.file}:`, e);
+          }
+          
+          chat = {
+            id: '',
+            channelId,
+            accountId,
+            sessionKey: currentSessionKey,
+            title: '',
+            lastMessageAt,
+            messageCount,
+            runCount: 0,
+            sessionFile: fileInfo.file,
+          };
+          
+          console.log(`[Chat] Created basic chat object for ${path.basename(fileInfo.file)}, messageCount=${messageCount}`);
+        }
+        
+        // ✅ 验证并修正渠道信息
+        if (chat.channelId === 'unknown' || chat.channelId === 'local') {
+          chat.channelId = channelId;
+        }
+        
+        // ✅ 统一使用 sessionId 作为 chat_id
+        // 当前会话：direct:sessionId
+        // 历史备份：direct:sessionId_resetTime
+        if (isCurrent) {
+          chat.sessionKey = currentSessionKey;
+          chat.id = `direct:${sessionId}`;
+          chat.title = extractTitle(sessionId, chat.lastMessageAt || Date.now());
+        } else {
+          const resetTime = fileInfo.resetTime || Date.now();
+          chat.sessionKey = `${currentSessionKey}_reset_${resetTime}`;
+          chat.id = `direct:${sessionId}_${resetTime}`;
+          chat.title = extractTitle(sessionId, resetTime);
+        }
+        
+        // 修正 sessionFile 路径
+        chat.sessionFile = fileInfo.file;
+        
+        console.log(`[Chat] Added chat: ${chat.title}, id=${chat.id}, sessionFile=${chat.sessionFile}`);
+        chats.push(chat);
+      } catch (e) {
+        console.error(`[Chat] Error parsing ${fileInfo.file}:`, e);
+      }
+    }
+  }
+  
+  return chats;
+}
+
+/**
+ * 扫描所有渠道的 Session（包括历史备份）
  */
 export async function scanAllSessions(
   openclawDir: string,
@@ -365,70 +557,15 @@ export async function scanAllSessions(
       continue;
     }
     
-    const sessionsJsonPath = path.join(agentsDir, agentName, 'sessions', 'sessions.json');
-    if (!fs.existsSync(sessionsJsonPath)) {
-      console.log(`[Chat] sessions.json not found for agent ${agentName}`);
-      continue;
-    }
-    
-    try {
-      const content = fs.readFileSync(sessionsJsonPath, 'utf-8');
-      const sessionsData = JSON.parse(content);
-      
-      for (const [sessionKey, sessionInfo] of Object.entries(sessionsData)) {
-        const session = sessionInfo as any;
-        const sessionFile = session.sessionFile;
-        
-        if (!sessionFile || !fs.existsSync(sessionFile)) {
-          continue;
-        }
-        
-        // 提取正确的 channelId 和 accountId
-        const extractedInfo = extractChannelAndAccountFromSessionKey(sessionKey, sessionFile);
-        
-        // 统计消息数量
-        const messageCount = countMessagesInFile(sessionFile);
-        
-        // 获取最后消息时间
-        const lastMessageAt = session.updatedAt || 0;
-        
-        // 提取 chatId（sessionKey 的最后一部分）
-        const chatId = extractChatId(sessionKey);
-        
-        // 生成标题
-        const title = extractTitle(sessionKey, lastMessageAt);
-        
-        chats.push({
-          id: chatId,
-          channelId: extractedInfo.channelId,
-          accountId: extractedInfo.accountId,
-          sessionKey,
-          title,
-          lastMessageAt,
-          messageCount,
-          runCount: 0,
-          sessionFile,
-        });
-      }
-    } catch (e) {
-      console.error(`[Chat] Error parsing sessions.json for ${agentName}:`, e);
-    }
+    const agentChats = await scanAgentSessions(agentsDir, agentName);
+    chats.push(...agentChats);
   }
   
-  // 去重
-  const chatMap = new Map<string, Chat>();
-  for (const chat of chats) {
-    const key = chat.sessionKey;
-    const existing = chatMap.get(key);
-    if (!existing || (chat.lastMessageAt || 0) > (existing.lastMessageAt || 0)) {
-      chatMap.set(key, chat);
-    }
-  }
+  // 按最后消息时间排序（最新的在前）
+  chats.sort((a, b) => (b.lastMessageAt || 0) - (a.lastMessageAt || 0));
   
-  const dedupedChats = Array.from(chatMap.values());
-  console.log(`[Chat] Total chats after scan: ${dedupedChats.length}`);
-  
-  return dedupedChats;
+  console.log(`[Chat] Total chats after scan: ${chats.length}`);
+  return chats;
 }
 
 /**
@@ -455,20 +592,22 @@ export async function getChatMessages(
 ): Promise<Message[]> {
   console.log(`[Chat] Loading messages from: ${sessionFile}, limit=${limit}, offset=${offset}`);
   
-  // 检查 sessionFile 是否存在且是 .jsonl 文件
+  // 检查 sessionFile 是否存在且是 .jsonl 文件（包括备份文件）
   if (!sessionFile || !fs.existsSync(sessionFile)) {
     console.log(`[Chat] Session file not found: ${sessionFile}`);
     return [];
   }
   
-  if (!sessionFile.endsWith('.jsonl')) {
+  // ✅ 支持 .jsonl 和 .jsonl.reset.* 文件
+  if (!sessionFile.endsWith('.jsonl') && !sessionFile.includes('.jsonl.reset.')) {
     console.log(`[Chat] Not a .jsonl file: ${sessionFile}`);
     return [];
   }
   
   // 使用 tail 命令读取文件末尾的行（性能优化）
-  // 需要读取 limit + offset 行，然后取后 limit 行
-  const linesToRead = limit + offset;
+  // ✅ 读取足够多的行数，确保过滤后能获取足够的有效消息
+  // 预估：有效消息约占 50%，读取 limit * 3 行
+  const linesToRead = Math.max((limit + offset) * 3, 1000);
   const { execSync } = require('child_process');
   
   let lines: string[];
@@ -551,12 +690,12 @@ export async function getChatMessages(
   // 按时间戳排序（最新的在前面）
   allMessages.sort((a, b) => b.timestamp - a.timestamp);
   
-  // 应用分页：从 offset 开始取 limit 条
-  // tail 返回的是最后 N 行，我们需要跳过前 offset 条
-  const startIndex = Math.max(0, allMessages.length - limit);
-  const pagedMessages = allMessages.slice(startIndex);
+  // ✅ 正确的分页逻辑：
+  // offset=0: 返回最新的 limit 条消息 [0:limit]
+  // offset=50: 返回第 51-100 条消息 [50:100]
+  const pagedMessages = allMessages.slice(offset, offset + limit);
   
-  console.log(`[Chat] Loaded ${pagedMessages.length} messages from tail (${lines.length} lines read)`);
+  console.log(`[Chat] Loaded ${pagedMessages.length} messages (offset=${offset}, limit=${limit}, total=${allMessages.length})`);
   return pagedMessages;
 }
 
