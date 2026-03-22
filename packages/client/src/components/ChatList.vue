@@ -110,6 +110,54 @@ async function loadChats() {
   }
 }
 
+/**
+ * ✅ 平滑刷新：增量更新聊天列表，避免闪烁
+ * 
+ * 逻辑：
+ * 1. 新聊天 → 添加到列表
+ * 2. 已移除的聊天 → 从列表中删除
+ * 3. 现有聊天 → 更新属性（lastMessageAt, messageCount）
+ * 
+ * 这样可以保持选中状态和滚动位置
+ */
+async function refresh() {
+  try {
+    const data = await fetchChats();
+    const newChats = data.chats || [];
+    
+    // 创建 ID 到新聊天数据的映射
+    const newChatsMap = new Map(newChats.map((chat: Chat) => [chat.id, chat]));
+    
+    // 1. 移除不存在的聊天
+    chats.value = chats.value.filter(chat => newChatsMap.has(chat.id));
+    
+    // 2. 更新现有聊天或添加新聊天
+    for (const newChat of newChats) {
+      const existingIndex = chats.value.findIndex(c => c.id === newChat.id);
+      
+      if (existingIndex !== -1) {
+        // 更新现有聊天的属性（保持响应式）
+        chats.value[existingIndex] = {
+          ...chats.value[existingIndex],
+          lastMessageAt: newChat.lastMessageAt,
+          messageCount: newChat.messageCount,
+          title: newChat.title,
+        };
+      } else {
+        // 添加新聊天
+        chats.value.push(newChat);
+      }
+    }
+    
+    console.log('[ChatList] Refreshed chats:', {
+      total: chats.value.length,
+      new: newChats.length,
+    });
+  } catch (error) {
+    console.error('Failed to refresh chats:', error);
+  }
+}
+
 function updateChat(chatId: string, updates: Partial<Chat>) {
   const index = chats.value.findIndex(c => c.id === chatId);
   if (index !== -1) {

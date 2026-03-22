@@ -204,9 +204,16 @@ async function loadMore() {
 }
 
 function appendMessage(msg: Message) {
+  // ✅ 检测滚动条是否在底部
+  const isAtBottom = isScrolledToBottom();
+  
   messages.value.push(msg);
   total.value++;
-  scrollToBottom();
+  
+  // ✅ 只有滚动条在底部时，才自动滚动到底部
+  if (isAtBottom) {
+    scrollToBottom();
+  }
 }
 
 function refresh() {
@@ -215,6 +222,20 @@ function refresh() {
   messages.value = [];
   total.value = 0;
   loadMessages();
+}
+
+/**
+ * ✅ 检测滚动条是否在底部
+ * 
+ * 判断逻辑：距离底部小于 100px 认为是在底部
+ */
+function isScrolledToBottom(): boolean {
+  if (!messageListRef.value) return true;
+  
+  const { scrollTop, scrollHeight, clientHeight } = messageListRef.value;
+  const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+  
+  return distanceFromBottom < 100;
 }
 
 function scrollToBottom() {
