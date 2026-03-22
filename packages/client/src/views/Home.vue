@@ -95,6 +95,8 @@ function onChatSelected(chat: any) {
 }
 
 function handleWebSocketMessage(data: any) {
+  console.log('[WS] Received message:', data.type, data.data?.type || 'no data type');
+  
   if (data.type === 'new_message' && data.data) {
     const sessionFile = data.data.file;
     const message = data.data.message;
@@ -124,16 +126,28 @@ function handleWebSocketMessage(data: any) {
       chatListRef.value.updateBySessionFile(sessionFile, { lastMessageAt: messageTime });
     }
     
-    // ✅ 追加消息到详情页
+    // ✅ 追加消息到详情页（只在用户处于底部时）
     if (selectedChat.value && messageDetailRef.value && sessionFile) {
       if (selectedChat.value.sessionFile === sessionFile && message) {
-        const msg = message.message || message;
-        messageDetailRef.value.appendMessage({
-          id: message.id || `msg-${Date.now()}`,
-          role: msg.role || 'user',
-          content: msg.content || '',
-          timestamp: messageTime,
-        });
+        // 检查用户是否在底部
+        const isAtBottom = messageDetailRef.value.isScrolledToBottom?.() ?? true;
+        
+        if (isAtBottom) {
+          // 用户在底部，正常追加消息
+          const msg = message.message || message;
+          messageDetailRef.value.appendMessage({
+            id: message.id || `msg-${Date.now()}`,
+            role: msg.role || 'user',
+            content: msg.content || '',
+            timestamp: messageTime,
+          });
+          console.log('[WS] User at bottom, message appended');
+        } else {
+          // 用户不在底部，不打断查看历史消息
+          console.log('[WS] User not at bottom, skipping message to avoid interruption');
+          // ✅ 可选：可以在这里显示一个提示，告诉用户有新消息
+          // 但目前先保持安静
+        }
       }
     }
   }

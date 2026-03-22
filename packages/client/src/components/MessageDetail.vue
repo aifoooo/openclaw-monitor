@@ -308,6 +308,7 @@ function formatTime(timestamp: number): string {
 defineExpose({
   refresh,
   appendMessage,
+  isScrolledToBottom,
 });
 
 watch(() => props.chatId, () => {
