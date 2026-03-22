@@ -158,8 +158,10 @@ async function loadMessages() {
     offset.value = limit;
     hasMore.value = messages.value.length < total.value;
     
-    // 加载完成后滚动到底部
-    scrollToBottom();
+    // ✅ 只在初始加载时滚动到底部
+    if (messages.value.length > 0 && offset.value === limit) {
+      scrollToBottom();
+    }
   } catch (error) {
     console.error('Failed to load messages:', error);
   } finally {
@@ -204,13 +206,14 @@ async function loadMore() {
 }
 
 function appendMessage(msg: Message) {
-  // ✅ 检测滚动条是否在底部
+  // ✅ 检测滚动条是否在底部（更严格的判断）
   const isAtBottom = isScrolledToBottom();
+  console.log('[MessageDetail] Append message, isAtBottom:', isAtBottom);
   
   messages.value.push(msg);
   total.value++;
   
-  // ✅ 只有滚动条在底部时，才自动滚动到底部
+  // ✅ 只有滚动条明确在底部时，才自动滚动
   if (isAtBottom) {
     scrollToBottom();
   }
@@ -225,17 +228,19 @@ function refresh() {
 }
 
 /**
- * ✅ 检测滚动条是否在底部
+ * ✅ 检测滚动条是否在底部（严格模式）
  * 
- * 判断逻辑：距离底部小于 100px 认为是在底部
+ * 判断逻辑：距离底部小于 10px 才认为是在底部
+ * 之前是 100px，太宽松了
  */
 function isScrolledToBottom(): boolean {
-  if (!messageListRef.value) return true;
+  if (!messageListRef.value) return false; // 改为 false，更安全
   
   const { scrollTop, scrollHeight, clientHeight } = messageListRef.value;
   const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
   
-  return distanceFromBottom < 100;
+  // 只有距离底部小于 10px 才算在底部
+  return distanceFromBottom < 10;
 }
 
 function scrollToBottom() {
@@ -243,12 +248,9 @@ function scrollToBottom() {
     setTimeout(() => {
       if (messageListRef.value) {
         messageListRef.value.scrollTop = messageListRef.value.scrollHeight;
-        console.log('[MessageDetail] Scrolled to bottom:', {
-          scrollTop: messageListRef.value.scrollTop,
-          scrollHeight: messageListRef.value.scrollHeight
-        });
+        console.log('[MessageDetail] Auto-scrolled to bottom');
       }
-    }, 100); // 延迟 100ms 确保消息已渲染
+    }, 100);
   });
 }
 
