@@ -188,14 +188,15 @@ export function saveChat(chat: Chat): void {
   
   const now = Date.now();
   const stmt = db.prepare(`
-    INSERT INTO chats (chat_id, channel_id, account_id, session_key, title, last_message_at, message_count, run_count, session_file, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO chats (chat_id, channel_id, account_id, session_key, title, last_message_at, message_count, run_count, session_file, is_hidden, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(chat_id) DO UPDATE SET
       title = excluded.title,
       last_message_at = excluded.last_message_at,
       message_count = excluded.message_count,
       run_count = excluded.run_count,
       session_file = excluded.session_file,
+      is_hidden = excluded.is_hidden,
       updated_at = excluded.updated_at
   `);
   
@@ -209,6 +210,7 @@ export function saveChat(chat: Chat): void {
     chat.messageCount || 0,
     chat.runCount || 0,
     chat.sessionFile || null,
+    chat.isHidden ? 1 : 0,
     now,
     now
   );

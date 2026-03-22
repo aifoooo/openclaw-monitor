@@ -189,9 +189,22 @@ export async function parseSessionFile(
 
     // 使用 sessionId 生成 title
     const title = sessionId ? extractTitle(sessionId, firstMessageAt) : 'Unknown';
+    
+    // ✅ 检测是否是备份文件（.jsonl.reset.* 或 .jsonl.时间戳）
+    const isReset = filePath.includes('.jsonl.reset.') || /\.jsonl\.\d{13}$/.test(filePath);
+    
+    // ✅ 如果是备份文件，生成不同的 chat_id（添加 _reset 后缀）
+    // 这样可以避免与当前会话冲突，同时保留历史记录
+    let chatId = sessionId ? `direct:${sessionId}` : '';
+    if (isReset && sessionId) {
+      // 提取重置时间（从文件名中）
+      const resetMatch = filePath.match(/\.reset\.(\d{4}-\d{2}-\d{2}T[\d:-]+\.\d+Z)/);
+      const resetTime = resetMatch ? new Date(resetMatch[1]).getTime() : Date.now();
+      chatId = `direct:${sessionId}_${resetTime}`;
+    }
 
     return {
-      id: sessionId ? `direct:${sessionId}` : '',
+      id: chatId,
       channelId,
       accountId,
       sessionKey: '', // 由 scanAgentSessions 设置
@@ -200,6 +213,7 @@ export async function parseSessionFile(
       messageCount: messages.length,
       runCount: 0,
       sessionFile: filePath,
+      isHidden: isReset ? true : false, // ✅ 备份文件标记为隐藏
     };
   } catch (e) {
     console.error(`[Chat] Failed to parse session file: ${filePath}`, e);
@@ -250,8 +264,12 @@ function extractChatId(sessionKey: string): string {
  * @param createdAt - 创建时间
  */
 function extractTitle(sessionId: string, createdAt?: number): string {
-  // ✅ 无论如何都从 sessionId 中提取正确的 shortId（用户要求：无条件判断）
-  const idPart = sessionId.split('_reset_')[0];  // 移除重置时间后缀
+  // ✅ 检测是否是 reset 文件（备份文件）
+  // reset 文件的 sessionId 格式：uuid_时间戳 或包含 _reset_
+  const isReset = sessionId.includes('_reset_') || /_\d{13}$/.test(sessionId);
+  
+  // ✅ 提取 shortId（移除 _reset_时间戳 或 _时间戳 后缀）
+  const idPart = sessionId.split('_reset_')[0].split('_')[0];  // 移除所有后缀
   const shortId = idPart.substring(0, 8);       // 取前8位作为短ID
   
   // 如果有创建时间，显示时间 + ID
@@ -261,10 +279,15 @@ function extractTitle(sessionId: string, createdAt?: number): string {
     const day = String(date.getDate()).padStart(2, '0');
     const hour = String(date.getHours()).padStart(2, '0');
     const minute = String(date.getMinutes()).padStart(2, '0');
-    return `${month}-${day} ${hour}:${minute} (${shortId})`;
+    
+    // ✅ 如果是 reset 文件，添加 [备份] 标记
+    const resetMark = isReset ? ' [备份]' : '';
+    return `${month}-${day} ${hour}:${minute}${resetMark} (${shortId})`;
   }
   
-  return shortId;
+  // ✅ 如果是 reset 文件，添加 [备份] 标记
+  const resetMark = isReset ? ' [备份] ' : '';
+  return `${resetMark}${shortId}`;
 }
 
 /**

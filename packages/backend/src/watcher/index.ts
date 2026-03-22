@@ -54,9 +54,29 @@ export function startMessageWatcher(
   messageWatcher.on('add', async (filePath: string) => {
     console.log(`[MessageWatcher] New file: ${filePath}`);
     
-    // ✅ 不再自己解析，等待 sessions.json 更新
-    // 定时同步任务会处理新会话（每分钟）
-    // 这里只通知前端刷新，前端会调用 /api/chats 获取最新数据
+    // ✅ 立即扫描新文件并创建数据库记录
+    try {
+      const chat = require('../chat');
+      const db = require('../db/extended');
+      
+      // 从文件路径提取 agent 信息
+      const match = filePath.match(/\/agents\/([^/]+)\//);
+      const agentName = match ? match[1] : 'unknown';
+      
+      // 获取 channel 和 account
+      const { channelId, accountId } = chat.getChannelAndAccount(agentName);
+      
+      // 解析 session 文件
+      const newChat = await chat.parseSessionFile(filePath, channelId, accountId);
+      
+      if (newChat) {
+        // 保存到数据库
+        db.saveChat(newChat);
+        console.log(`[MessageWatcher] Added new chat: ${newChat.id} (${newChat.title})`);
+      }
+    } catch (e) {
+      console.error(`[MessageWatcher] Error processing new file:`, e);
+    }
     
     // 等待 500ms 让 sessions.json 更新
     await new Promise(resolve => setTimeout(resolve, 500));
